@@ -10,10 +10,15 @@
 //! REQUIRE_GOLDEN_P1=1 insists. MUTATE=1 serves the CHR bus a wrong
 //! byte for one address; the replay must diverge.
 //!
-//! The same nine undefined power-on latches are exempt as in the P0
-//! golden, minus the six that flush (this trace starts a frame in):
-//! only the x-flip trio remains, and it is expected to LEAVE the list
-//! when a milestone writes real sprite data through it.
+//! The exemption is the P0 family measured wider and then CLOSED
+//! (examples/p1-diverge-probe.rs, 2026-09-02): the same undefined
+//! power-on sprite-path latches, here all eight spr_dN_in bits plus
+//! their range-gated followers and eight unnamed followers, 27 nodes,
+//! circulate their coin flips while no real sprite data has moved.
+//! Once rendering is on and sprite evaluation writes through the path,
+//! every one of them flushes, the x-flip trio included (P0 predicted
+//! that): the last divergent state is 1981, and the trailing 1,642
+//! states are bit-exact across ALL 10,906 nodes with no mask at all.
 
 use v2c02_sim::harness::Harness;
 use v2c02_sim::Ppu;
@@ -65,10 +70,27 @@ fn the_reference_replays_through_the_harness() {
     let mut h = Harness::new(Ppu::power_on(), if mutate() { vram_mutated } else { vram });
     h.wait(712_100);
     let nl = h.ppu.engine.netlist().clone();
-    let exempt: Vec<usize> = ["x_flip_flag_in", "/x_flip_flag_in", "x_flip_flag_in_2"]
-        .iter()
-        .map(|n| nl.node(n).unwrap() as usize)
-        .collect();
+    // The measured 27-node family (see the module comment). Exempt only
+    // BEFORE the measured flush; after it the comparison runs unmasked.
+    let mut exempt: Vec<usize> = Vec::new();
+    for n in ["x_flip_flag_in", "/x_flip_flag_in", "x_flip_flag_in_2"] {
+        exempt.push(nl.node(n).unwrap_or_else(|| panic!("exempt node {n} missing")) as usize);
+    }
+    for bit in 0..8 {
+        for n in [
+            format!("spr_d{bit}_in"),
+            format!("/(spr_d{bit}_in_and_+sprite_in_range_reg)"),
+        ] {
+            exempt.push(nl.node(&n).unwrap_or_else(|| panic!("exempt node {n} missing")) as usize);
+        }
+    }
+    // Unnamed followers of the same latches, by id (as in P0).
+    exempt.extend([10_709usize, 10_712, 10_727, 10_731, 10_734, 10_736, 10_738, 10_740]);
+    assert_eq!(exempt.len(), 27, "the exemption list is closed");
+    // Measured: the last divergent state is 1981; from here the mask is
+    // empty. If this moves, re-measure with p1-diverge-probe, do not
+    // widen it.
+    const FLUSH_STATE: usize = 1_982;
 
     // The golden dumps one state per half-step from the first access
     // edge onward; replay the same accesses, comparing after every
@@ -76,13 +98,14 @@ fn the_reference_replays_through_the_harness() {
     // inside, so the protocol edges themselves are checked.
     let mut want = lines;
     let mut compared = 0usize;
-    let check = |h: &Harness, want: &mut std::str::Lines, at: &str| {
+    let check = |h: &Harness, want: &mut std::str::Lines, state: usize, at: &str| {
         let expect = want.next().unwrap_or_else(|| panic!("golden ended at {at}"));
         let got = h.ppu.state_line();
+        let masked = state < FLUSH_STATE;
         for (i, (a, b)) in got.bytes().zip(expect.bytes()).enumerate() {
-            if a != b && !exempt.contains(&i) {
+            if a != b && !(masked && exempt.contains(&i)) {
                 panic!(
-                    "{at}: divergence at node {i} ({})",
+                    "{at} (state {state}): divergence at node {i} ({})",
                     nl.name_of(i as halfphi::NodeId).unwrap_or("(unnamed)")
                 );
             }
@@ -99,15 +122,24 @@ fn the_reference_replays_through_the_harness() {
         for counter in (1..=24u32).rev() {
             h.access_edge(*rw, *reg, *val, counter);
             h.half_step();
-            check(&h, &mut want, &format!("access {k} edge {counter}"));
+            check(&h, &mut want, compared, &format!("access {k} edge {counter}"));
             compared += 1;
         }
         h.end_access();
     }
     for i in 0..3_000usize {
         h.half_step();
-        check(&h, &mut want, &format!("render step {i}"));
+        check(&h, &mut want, compared, &format!("render step {i}"));
         compared += 1;
     }
-    eprintln!("replayed {compared} states through the harness");
+    assert!(
+        compared > FLUSH_STATE + 1_000,
+        "too few unmasked states after the flush: {compared}"
+    );
+    eprintln!(
+        "replayed {compared} states through the harness: 27 undefined latches \
+         masked through state {}, {} states fully unmasked",
+        FLUSH_STATE - 1,
+        compared - FLUSH_STATE
+    );
 }

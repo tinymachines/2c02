@@ -23,25 +23,49 @@ transistors that conduct permanently in silicon, absent from every
 chip halfphi had met, set conducting by `Ppu::power_on` and proven
 load-bearing by mutation.
 
+P1 (the world, first light, the DAC) is closed
+(`docs/p1-report.md`): a harness restating the reference's own CPU and
+CHR bus machinery, a second node golden that replays the register
+program and 3,000 rendering half-steps **through the harness** (3,624
+states; the P0 exemption family, 27 nodes here, all flush once
+rendering moves real sprite data, and the trailing 1,642 states are
+bit-exact on all 10,906 nodes with no mask), first light off the
+palette bus into ntsc-crt's DotFrame, and the video DAC held to the
+transcribed level table **sample for sample: zero mismatches over
+7,680 active samples**, subcarrier phase and pipeline delay fitted
+once and pinned. Rendering-on throughput measured at ~32,900
+half-steps/s (a frame in about 22 s).
+
 | Crate | Role |
 |---|---|
 | `v2c02-netlist` | The die data parsed by halfphi at build time and embedded; builds data-free with a loud refusal when the extern is not fetched. |
-| `v2c02-sim` | Power-on and the reference's reset recipe, half-stepping, the node dump the golden comparison rides on. |
+| `v2c02-sim` | Power-on and the reference's reset recipe, half-stepping, the node dump the golden comparison rides on, and the harness: the 24-edge CPU register protocol and the CHR/VRAM bus, mirrored from the reference. |
+| `v2c02-dots` | From switches to dots: the standard P1 world, frame capture off the palette output bus into ntsc-crt's DotFrame, and the sample-exact DAC comparison. |
 
 ## Commands
 
 ```bash
 bash tools/fetch-netlist.sh          # Quietust's Visual 2C02, five files,
                                      # sha256-pinned (never committed)
-cargo test --workspace               # counts, convergence, the golden
-                                     # replay; tests SKIP by name without
-                                     # the extern or the golden;
+cargo test --workspace --release     # counts, convergence, both goldens,
+                                     # the DAC gate; tests SKIP by name
+                                     # without the extern or a golden;
                                      # REQUIRE_NETLIST=1 / REQUIRE_GOLDEN=1
-MUTATE=1 cargo test --workspace      # must go red: the supply-gated
-                                     # fix-up switched off
-node tools/golden-trace/gen.js       # regenerate the reference trace
+                                     # / REQUIRE_GOLDEN_P1=1 insist
+MUTATE=1 cargo test --workspace --release   # must go red three ways: the
+                                     # supply-gated fix-up off, the CHR bus
+                                     # serving a wrong byte, the DAC delay
+                                     # off by one
+node tools/golden-trace/gen.js       # regenerate the P0 trace
                                      # (601 states, about 5 s)
-cargo run --release -p v2c02-sim --example bench   # rung-0 throughput
+node tools/golden-trace/gen-p1.js    # regenerate the P1 trace (712,100
+                                     # pre-roll + 3,624 states, ~40 min)
+cargo run --release -p v2c02-sim --example bench        # quiescent throughput
+cargo run --release -p v2c02-dots --example p1-bench    # rendering-on throughput
+cargo run --release -p v2c02-dots --example first-light # goldens/p1-first-light.ppm
+cargo run --release -p v2c02-sim --example p1-diverge-probe
+                                     # the measurement the P1 exemption
+                                     # is written from
 ```
 
 ## Licensing
