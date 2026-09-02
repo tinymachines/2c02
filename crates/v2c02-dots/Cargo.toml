@@ -1,0 +1,17 @@
+[package]
+name = "v2c02-dots"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The switch-level chip's video output as ntsc-crt's DotFrame, plus the sample-exact DAC comparison: the chip's own leg drives against the transcribed level table, one half-step per grid sample."
+
+[dependencies]
+v2c02-netlist = { path = "../v2c02-netlist" }
+halfphi = { git = "https://github.com/tinymachines/halfphi", tag = "v0.1.2" }
+v2c02-sim = { path = "../v2c02-sim" }
+ntsc-grid = { git = "https://github.com/tinymachines/ntsc-crt", tag = "v0.2.0" }
+ntsc-source-nes = { git = "https://github.com/tinymachines/ntsc-crt", tag = "v0.2.0" }
+
+[dev-dependencies]
+ntsc-decode = { git = "https://github.com/tinymachines/ntsc-crt", tag = "v0.2.0" }
+ntsc-crt = { git = "https://github.com/tinymachines/ntsc-crt", tag = "v0.2.0" }

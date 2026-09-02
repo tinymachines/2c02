@@ -13,6 +13,8 @@
 //! silicon does and what the reference does. The 46 ground-gated
 //! transistors are permanently off in both models and need nothing.
 
+pub mod harness;
+
 use std::sync::Arc;
 
 use halfphi::{Engine, Netlist, NodeId};
