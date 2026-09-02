@@ -1,0 +1,10 @@
+[package]
+name = "v2c02-sim"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The 2C02 clock and pin layer over halfphi: power-on, the reference's reset recipe, half-stepping, and the node-state dump the golden comparison rides on."
+
+[dependencies]
+halfphi = { git = "https://github.com/tinymachines/halfphi", tag = "v0.1.2" }
+v2c02-netlist = { path = "../v2c02-netlist" }

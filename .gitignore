@@ -1,0 +1,4 @@
+/target
+/extern/visual2c02
+/goldens
+tools/golden-trace/golden-2c02.txt
