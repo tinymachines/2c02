@@ -8,7 +8,10 @@
 //! SKIPS by name without the golden (node tools/golden-trace/gen-p1.js,
 //! which takes about half an hour of the reference's time);
 //! REQUIRE_GOLDEN_P1=1 insists. MUTATE=1 serves the CHR bus a wrong
-//! byte for one address; the replay must diverge.
+//! byte for one address; MUTATE=rd routes the CHR bus through the
+//! nes-bus contract's mutated_rd_for_proof, flipping /RD's polarity at
+//! the pin frame (the N0 contract gate). Either way the replay must
+//! diverge.
 //!
 //! The exemption is the P0 family measured wider and then CLOSED
 //! (examples/p1-diverge-probe.rs, 2026-09-02): the same undefined
@@ -68,6 +71,9 @@ fn the_reference_replays_through_the_harness() {
     assert!(header.starts_with("2c02 p1 golden:"), "not a P1 golden: {header}");
 
     let mut h = Harness::new(Ppu::power_on(), if mutate() { vram_mutated } else { vram });
+    if std::env::var("MUTATE").as_deref() == Ok("rd") {
+        h.mutate_rd_for_proof = true;
+    }
     h.wait(712_100);
     let nl = h.ppu.engine.netlist().clone();
     // The measured 27-node family (see the module comment). Exempt only

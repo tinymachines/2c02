@@ -17,8 +17,8 @@
 //!   sample: the master half-clock IS 12 x f_sc.
 
 use halfphi::NodeId;
-use ntsc_grid::FrameParity;
-use ntsc_source_nes::{levels, DotFrame, ACTIVE_ROWS, DOTS_PER_LINE};
+use nes_bus::{DotFrame, FrameParity, ACTIVE_ROWS, DOTS_PER_LINE};
+use ntsc_source_nes::levels;
 use v2c02_sim::harness::Harness;
 use v2c02_sim::Ppu;
 

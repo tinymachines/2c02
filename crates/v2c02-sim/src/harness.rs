@@ -9,6 +9,7 @@
 //! comparison covers the harness as well as the chip.
 
 use halfphi::NodeId;
+use nes_bus::pins::PpuPins;
 
 use crate::Ppu;
 
@@ -22,6 +23,11 @@ pub struct Harness {
     ale: NodeId,
     rd: NodeId,
     wr: NodeId,
+    ext_out_n: [NodeId; 4],
+    /// Test-only (the N0 contract gate): route the CHR bus through
+    /// `PpuPins::mutated_rd_for_proof`, which must send the P1 golden
+    /// red. Setting this anywhere but a mutation proof is a bug by name.
+    pub mutate_rd_for_proof: bool,
     chr_ale: bool,
     chr_rd: bool,
     chr_wr: bool,
@@ -47,6 +53,8 @@ impl Harness {
             ale: n("ale"),
             rd: n("rd"),
             wr: n("wr"),
+            ext_out_n: std::array::from_fn(|i| arr("/ext_out", i)),
+            mutate_rd_for_proof: false,
             chr_ale: ppu.engine.is_high(n("ale")),
             chr_rd: ppu.engine.is_high(n("rd")),
             chr_wr: ppu.engine.is_high(n("wr")),
@@ -95,12 +103,53 @@ impl Harness {
         self.half_steps += 1;
     }
 
+    /// The chip-driven view of the package pins, this half-step, as the
+    /// console contract's frame. Two extraction notes, both faithful to
+    /// the reference's own model of the bus:
+    ///
+    /// - `ad` and `a_hi` are read from the internal address bus, which is
+    ///   what the pads carry in the address phase (the AD0..7 data phase
+    ///   is serviced by the harness as bus master, not observed here; the
+    ///   full pad mux is the console's problem, at N5).
+    /// - `ext` is the EXT0..3 pins as driven by the chip's inverted
+    ///   output drivers (`/ext_outN`); nothing external drives them in
+    ///   this world.
+    /// - `vout` is `None`: a digital extraction does not sample the DAC.
+    ///   The sample-exact comparison in v2c02-dots owns that pin.
+    pub fn pins(&self) -> PpuPins {
+        let e = &self.ppu.engine;
+        let bits = |ns: &[NodeId]| -> u32 {
+            ns.iter()
+                .enumerate()
+                .map(|(i, &n)| (e.is_high(n) as u32) << i)
+                .sum()
+        };
+        PpuPins {
+            clk: e.is_high(self.ppu.sig.clk0),
+            cpu_rw: e.is_high(self.io_rw),
+            cpu_d: bits(&self.io_db) as u8,
+            cpu_a: bits(&self.io_ab) as u8,
+            cs_n: e.is_high(self.ppu.sig.io_ce),
+            ext: (!bits(&self.ext_out_n) & 0xf) as u8,
+            int_n: e.is_high(self.ppu.sig.int),
+            rst_n: e.is_high(self.ppu.sig.res),
+            vout: None,
+            ale: e.is_high(self.ale),
+            ad: (bits(&self.ab) & 0xff) as u8,
+            a_hi: (bits(&self.ab) >> 8) as u8,
+            rd_n: e.is_high(self.rd),
+            wr_n: e.is_high(self.wr),
+        }
+    }
+
     fn handle_chr_bus(&mut self) {
-        let ale = self.ppu.engine.is_high(self.ale);
-        let rd = self.ppu.engine.is_high(self.rd);
-        let wr = self.ppu.engine.is_high(self.wr);
+        let mut p = self.pins();
+        if self.mutate_rd_for_proof {
+            p = p.mutated_rd_for_proof();
+        }
+        let (ale, rd, wr) = (p.ale, p.rd_n, p.wr_n);
         if !self.chr_ale && ale {
-            self.chr_addr = self.read_bits(&self.ab) as u16;
+            self.chr_addr = (p.ad as u16) | ((p.a_hi as u16) << 8);
         }
         if self.chr_rd && !rd {
             let d = (self.vram)(self.chr_addr & 0x3fff);

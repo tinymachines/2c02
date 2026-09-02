@@ -36,6 +36,14 @@ transcribed level table **sample for sample: zero mismatches over
 once and pinned. Rendering-on throughput measured at ~32,900
 half-steps/s (a frame in about 22 s).
 
+N0 of the console sketch is adopted:
+[nes-bus](https://github.com/tinymachines/nes-bus) is the contracts'
+home. `DotFrame` is consumed from there (ntsc-crt re-exports it), and
+the harness's CHR bus service reads the chip through the contract's
+`PpuPins` frame, so the P1 golden now covers the pin frame too:
+`MUTATE=rd` flips /RD's polarity in that frame and the replay must go
+red.
+
 | Crate | Role |
 |---|---|
 | `v2c02-netlist` | The die data parsed by halfphi at build time and embedded; builds data-free with a loud refusal when the extern is not fetched. |
@@ -56,6 +64,10 @@ MUTATE=1 cargo test --workspace --release   # must go red three ways: the
                                      # supply-gated fix-up off, the CHR bus
                                      # serving a wrong byte, the DAC delay
                                      # off by one
+MUTATE=rd cargo test -p v2c02-sim --release --test golden_p1
+                                     # the fourth red, the N0 contract gate:
+                                     # /RD's polarity flipped in the nes-bus
+                                     # PpuPins frame the CHR bus reads
 node tools/golden-trace/gen.js       # regenerate the P0 trace
                                      # (601 states, about 5 s)
 node tools/golden-trace/gen-p1.js    # regenerate the P1 trace (712,100
