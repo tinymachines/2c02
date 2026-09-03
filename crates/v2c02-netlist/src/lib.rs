@@ -9,6 +9,7 @@ use std::sync::Arc;
 pub use halfphi::{Engine, Netlist};
 
 include!(concat!(env!("OUT_DIR"), "/counts.rs"));
+include!(concat!(env!("OUT_DIR"), "/areas.rs"));
 
 static BLOB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/netlist.bin"));
 
@@ -24,5 +25,12 @@ pub fn netlist() -> Arc<Netlist> {
         available(),
         "built without extern/visual2c02: run tools/fetch-netlist.sh and rebuild"
     );
-    Arc::new(Netlist::decode(BLOB).expect("embedded blob decodes"))
+    let mut nl = Netlist::decode(BLOB).expect("embedded blob decodes");
+    // The reference's own rail-conflict special case, applied through
+    // halfphi's generic hold: areas first (the vote's weights, computed
+    // by build.rs the way wires.js computes them), then the list
+    // extracted from the pinned chipsim.js.
+    nl.set_node_areas(NODE_AREAS.into());
+    nl.set_rail_conflict_holds(RAIL_CONFLICT_HOLDS);
+    Arc::new(nl)
 }

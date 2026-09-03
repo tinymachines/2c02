@@ -7,5 +7,5 @@ description = "The 2C02 clock and pin layer over halfphi: power-on, the referenc
 
 [dependencies]
 nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.1" }
-halfphi = { git = "https://github.com/tinymachines/halfphi", tag = "v0.1.3" }
+halfphi = { git = "https://github.com/tinymachines/halfphi", tag = "v0.1.5" }
 v2c02-netlist = { path = "../v2c02-netlist" }

@@ -25,9 +25,10 @@ fn main() {
         std::fs::write(out.join("netlist.bin"), []).unwrap();
         std::fs::write(
             out.join("counts.rs"),
-            "pub const NODE_COUNT: usize = 0;\npub const TRANSISTOR_COUNT: usize = 0;\npub const NAME_COUNT: usize = 0;\n",
+            "pub const NODE_COUNT: usize = 0;\npub const TRANSISTOR_COUNT: usize = 0;\npub const NAME_COUNT: usize = 0;\npub const RAIL_CONFLICT_HOLDS: &[u16] = &[];\n",
         )
         .unwrap();
+        std::fs::write(out.join("areas.rs"), "pub const NODE_AREAS: &[f64] = &[];\n").unwrap();
         return;
     }
 
@@ -44,14 +45,69 @@ fn main() {
     .expect("visual2c02 data did not parse");
     let nl = halfphi::Netlist::decode(&parsed.blob).expect("blob decodes");
 
+    // The rail-conflict hold list: the nodes the reference's own chipsim
+    // special-cases when a group holds both rails (its getNodeValue
+    // suppresses gnd and pwr for exactly these, the spr_d OAM data
+    // lines). Extracted from the pinned chipsim.js rather than typed, so
+    // the claim comes from the artifact making it; the counts test holds
+    // the list to the spr_d names independently.
+    let chipsim = read("chipsim.js");
+    let mut holds: Vec<u32> = Vec::new();
+    for chunk in chipsim.split("arrayContains(group, ").skip(1) {
+        let digits: String = chunk.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            let id: u32 = digits.parse().unwrap();
+            if !holds.contains(&id) {
+                holds.push(id);
+            }
+        }
+    }
+    holds.sort_unstable();
+    assert!(!holds.is_empty(), "chipsim.js no longer names its rail-conflict nodes");
+
+    // Per-node areas for the hold's charge vote, computed the way the
+    // reference's wires.js computes them: twice the shoelace area per
+    // polygon, absolute, summed per node, with the rails accumulating
+    // nothing (wires.js skips gnd's polygons entirely and skips pwr in
+    // the area sum).
+    let mut areas = vec![0.0f64; nl.node_count()];
+    for poly in &parsed.polygons {
+        let n = poly.node;
+        if n == nl.vss() || n == nl.vcc() {
+            continue;
+        }
+        let pts = &poly.pts;
+        if pts.len() < 3 {
+            continue;
+        }
+        let mut a = 0.0f64;
+        for i in 0..pts.len() {
+            let (x1, y1) = pts[i];
+            let (x2, y2) = pts[(i + 1) % pts.len()];
+            a += x1 as f64 * y2 as f64 - x2 as f64 * y1 as f64;
+        }
+        areas[n as usize] += a.abs();
+    }
+    let mut areas_src = String::from("pub const NODE_AREAS: &[f64] = &[\n");
+    for chunk in areas.chunks(16) {
+        areas_src.push_str("    ");
+        for v in chunk {
+            areas_src.push_str(&format!("{v:.1},"));
+        }
+        areas_src.push('\n');
+    }
+    areas_src.push_str("];\n");
+    std::fs::write(out.join("areas.rs"), areas_src).unwrap();
+
     std::fs::write(out.join("netlist.bin"), &parsed.blob).unwrap();
     std::fs::write(
         out.join("counts.rs"),
         format!(
-            "pub const NODE_COUNT: usize = {};\npub const TRANSISTOR_COUNT: usize = {};\npub const NAME_COUNT: usize = {};\n",
+            "pub const NODE_COUNT: usize = {};\npub const TRANSISTOR_COUNT: usize = {};\npub const NAME_COUNT: usize = {};\npub const RAIL_CONFLICT_HOLDS: &[u16] = &{:?};\n",
             nl.node_count(),
             nl.transistor_count(),
             parsed.name_count,
+            holds,
         ),
     )
     .unwrap();

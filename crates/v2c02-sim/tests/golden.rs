@@ -64,6 +64,18 @@ fn the_counts_match_the_sketchs_independent_measurement() {
     for name in ["clk0", "res", "io_ce", "int", "vid_emph", "vid_burst_h", "vid_luma0_h"] {
         assert!(nl.node(name).is_some(), "node {name} missing");
     }
+    // The rail-conflict hold list build.rs extracts from chipsim.js must
+    // be exactly the spr_d OAM data lines, derived here by NAME from the
+    // netlist, so the two sources cross-check and neither is typed.
+    let mut sprd: Vec<halfphi::NodeId> = (0..8)
+        .map(|i| nl.node(&format!("spr_d{i}")).unwrap_or_else(|| panic!("spr_d{i}")))
+        .collect();
+    sprd.sort_unstable();
+    assert_eq!(
+        v2c02_netlist::RAIL_CONFLICT_HOLDS,
+        &sprd[..],
+        "chipsim.js's rail-conflict ids are not the spr_d bus"
+    );
     eprintln!(
         "2c02: {} nodes, {} transistors, {} names",
         v2c02_netlist::NODE_COUNT,
