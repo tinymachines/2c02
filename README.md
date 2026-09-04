@@ -194,6 +194,9 @@ node tools/golden-trace/gen-p1.js    # regenerate the P1 trace (712,100
 cargo run --release -p v2c02-sim --example bench        # quiescent throughput
 cargo run --release -p v2c02-dots --example p1-bench    # rendering-on throughput
 cargo run --release -p v2c02-dots --example first-light # goldens/p1-first-light.ppm
+cargo run --release -p v2c02-dots --example render-golden -- goldens/p3-sprites.bin out.ppm
+                                     # any dot golden through ntsc-crt's
+                                     # encode, decode and CRT stages
 cargo run --release -p v2c02-sim --example p1-diverge-probe
                                      # the measurement the P1 exemption
                                      # is written from
