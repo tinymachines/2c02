@@ -92,21 +92,54 @@ world hit. With idle between the writes, **the reference lands every
 byte as written and rung 0 lands `data OR (v & 0xff)`**, the byte ORed
 with the low byte of the VRAM address (`21|11 = 31`, `11|12 = 13`,
 `01|13 = 13`, `2a|14 = 3e`; on the row above $20, `11|22 = 33`, so the
-term is the address, not the palette index). **That is an engine
+term is the address, not the palette index). **That was an engine
 divergence**, the family's second after the `spr_d` rail-conflict
 hold, and it was invisible to every node golden because none of them
 paces a palette write: P1's program writes its palette back to back,
 and P2's schedule paces only OAM. The harness is not the cause (the
-hold row above). The address low byte is what the multiplexed AD pins
-carry in the address phase, so the suspect is a node on the internal
-data path holding that phase's charge into the palette write on this
-engine and not on the reference, a group-resolution difference of the
-same family as the hold. It is found the way the hold was, a node
-golden from the reference around one paced palette write and the first
-node that differs, and fixed in halfphi as a rule. Until then the
-register file derives the palette the world wrote, the gates render
-from the palette the chip holds, and no world may rely on a paced
-palette write landing. The stepper is not what is wrong here.
+hold row above).
+
+**The cause, and halfphi 0.1.6.** The reference's `getNodeValue`
+resolves a group with no rail and no pull by an AREA VOTE, the
+members' areas summed by level and the larger side winning, for every
+such group; visual6502's rule, which halfphi carried, makes the group
+high on any one charged member, and 0.1.5 used the area vote only as
+the rail-conflict hold's fallback. The two rules agree unless a bus
+floats mid-transfer holding mixed charge, which is exactly what a
+paced write leaves behind and a back-to-back one never does. halfphi
+0.1.6 adds `ChargeRule`, declared per netlist: `AnyHigh` stays the
+default and is what the 6502, the 6800, the Z80 and the 2A03
+references do; the 2C02's netlist declares `AreaVote`. With it
+declared, every row of the write probe is the reference's row,
+including the back-to-back trailing entry, and the P0, P1 and P2 node
+goldens replay green unchanged; `Stats::area_vote_lows`, the count of
+groups the two rules decide differently, is 121 over the gate's run.
+The gate is `tests/palette_write.rs` (paced writes land as written on
+both rows; `MUTATE=1` builds the chip under `AnyHigh` and goes red
+with `31 13 13 3e`). The node-level proof is
+`examples/pal-diverge-probe.rs` against
+`tools/golden-trace/gen-pal-golden.js`, the reference's every node
+through one paced palette write; what it named is next. The stepper
+was never what was wrong here.
+
+**The divergence by name.** The reference dumped all 10,906 nodes on
+each of the 120 half-steps from the start of one paced `$2007 <- $21`
+access to $3F11 (the 24 edges and 96 of idle), and rung 0 replayed
+the identical sequence against it. Under the declared `AreaVote`:
+**no divergence in the window, every node on every half-step.** Under
+`AnyHigh`: the first difference is at window state 42, nineteen
+half-steps into the idle after the access's release, six nodes,
+`_io_db4` and `ab4_out` among them, bit 4 exactly, the bit the OR adds
+(`$21 | $11 = $31`). By state 46 it has spread to `_db4`, `ab4` and
+`/_ab4`, the data and address lines of bit 4 on the multiplexed path;
+by state 50 to `pal_d4_out`, the palette data bit that lands in the
+cell; the read-back at the end is `$31`. So the mechanism, read off
+the names: after the CPU releases the data bus, the floating group
+around data bit 4 still carries the address phase's charge from the AD
+mux, and a group with one charged member and more uncharged area
+resolves high under the old rule and low under the reference's vote.
+Both engines then carry that bit into the palette write; only one of
+them should.
 
 **The pixel pipeline** (`examples/p3-pal-probe.rs`, per half-step):
 `pal_d` precharges to zero through pclk0 and carries the colour through

@@ -16,8 +16,8 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "halfphi"
-version = "0.1.5"
-source = "git+https://github.com/tinymachines/halfphi?tag=v0.1.5#286806f4c91ab1282360ec5c479cac120dff1707"
+version = "0.1.6"
+source = "git+https://github.com/tinymachines/halfphi?tag=v0.1.6#1d460834d36728c5f8170749541578fb250320ed"
 
 [[package]]
 name = "hashbrown"

@@ -30,11 +30,16 @@ $2001, the OAM through $2003/$2004, held to the chip's read-back), and
 a scrolled world with a horizontal split and a full $2006/$2005/$2005/
 $2006 scroll change mid-frame **agrees on every visible dot again**,
 the writes landing inside their access (a measured three-dot plateau).
-Getting there produced the family's second proven engine divergence:
-a $2007 palette write with idle after it lands the byte ORed with the
-low byte of the VRAM address on rung 0 and as written on the
-reference, invisible to every node golden because none paces a
-palette write; open, and the report says how it will be found. `MUTATE=1` drops the coarse X increment
+Getting there produced the family's second proven engine divergence
+and its fix: a $2007 palette write with idle after it landed the byte
+ORed with the low byte of the VRAM address on rung 0 and as written on
+the reference, invisible to every node golden because none paces a
+palette write. The reference resolves every undriven group by an area
+vote where halfphi resolved on any charged member; halfphi 0.1.6's
+per-netlist `ChargeRule` lets the 2C02 declare the vote, every row of
+the write probe becomes the reference's, the node goldens stay green,
+and `tests/palette_write.rs` holds it (`MUTATE=1` builds the chip
+under the old rule and goes red). `MUTATE=1` drops the coarse X increment
 (step 1), the sprite fetches (step 2) or the horizontal copy (step 3)
 and goes red.
 
@@ -107,11 +112,22 @@ cargo test --workspace --release     # counts, convergence, the three
                                      # REQUIRE_NETLIST=1 / REQUIRE_GOLDEN=1
                                      # / REQUIRE_GOLDEN_P1=1 /
                                      # REQUIRE_GOLDEN_P2=1 insist
-MUTATE=1 cargo test --workspace --release   # must go red four ways: the
-                                     # supply-gated fix-up off, the CHR bus
-                                     # serving a wrong byte, the DAC delay
-                                     # off by one, the P2 world's background
-                                     # made transparent
+MUTATE=1 cargo test --workspace --release   # must go red: the supply-gated
+                                     # fix-up off, the CHR bus serving a
+                                     # wrong byte, the DAC delay off by one,
+                                     # the P2 world's background made
+                                     # transparent, the chip built under the
+                                     # AnyHigh charge rule, and the three P3
+                                     # table drops
+REQUIRE_NETLIST=1 cargo test --release -p v2c02-sim --test palette_write
+                                     # paced $2007 palette writes land as
+                                     # written (the charge-rule gate)
+cargo run --release -p v2c02-sim --example pal-diverge-probe
+                                     # every node through one paced palette
+                                     # write against the reference's dump
+                                     # (gen-pal-golden.js, ~35 min);
+                                     # CHARGE_RULE=any replays the divergence
+node tools/golden-trace/gen-pal-golden.js
 MUTATE=rd cargo test -p v2c02-sim --release --test golden_p1
                                      # the fifth red, the N0 contract gate:
                                      # /RD's polarity flipped in the nes-bus

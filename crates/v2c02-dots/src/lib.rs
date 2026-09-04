@@ -109,19 +109,19 @@ pub fn sprite_world() -> Harness {
 /// The sprite world's register program after the standard world's, as
 /// (register, value, half-steps of idle after the access): the idle is
 /// the harness's pacing (P2's finding for OAM writes; a $2006 pair
-/// waited out; each palette triple written back to back, since on rung
-/// 0 a paced $2007 palette write lands the byte ORed with the address
-/// low byte, the open engine divergence of docs/p3-report.md, and a
-/// back-to-back one does not). The register file ignores the idle; the
-/// read-back beside the golden records what the chip held either way.
+/// waited out; the palette written with an access width of idle after
+/// each entry, which lands every entry as written now that halfphi
+/// 0.1.6 resolves the chip's undriven groups the reference's way,
+/// docs/p3-report.md). The register file ignores the idle; the read-back
+/// beside the golden records what the chip held.
 pub fn sprite_program() -> Vec<(u8, u8, u64)> {
     let mut p = vec![(1u8, 0x00u8, 24u64)];
     for (i, cols) in SPRITE_PALETTE.iter().enumerate() {
         p.push((6, 0x3f, 24));
         p.push((6, 0x11 + 4 * i as u8, 48));
-        p.push((7, cols[0], 0));
-        p.push((7, cols[1], 0));
-        p.push((7, cols[2], 24));
+        for &c in cols {
+            p.push((7, c, 24));
+        }
     }
     p.push((3, 0x00, 24));
     p.extend(sprite_oam().iter().map(|&b| (4, b, 24)));
