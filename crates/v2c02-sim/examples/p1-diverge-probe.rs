@@ -45,32 +45,38 @@ fn main() {
         state += 1;
     };
 
-    let writes: Vec<(bool, u8, u8)> = {
+    // The generator's WRITES: (read, register, value, idle after), the
+    // palette writes paced by an access width (tests/golden_p1.rs).
+    let writes: Vec<(bool, u8, u8, u64)> = {
         let mut v = vec![
-            (true, 2u8, 0u8),
-            (false, 0, 0x00),
-            (false, 1, 0x00),
-            (false, 6, 0x3f),
-            (false, 6, 0x00),
+            (true, 2u8, 0u8, 0u64),
+            (false, 0, 0x00, 0),
+            (false, 1, 0x00, 0),
+            (false, 6, 0x3f, 0),
+            (false, 6, 0x00, 0),
         ];
-        v.extend(PALETTE.iter().map(|&p| (false, 7, p)));
+        v.extend(PALETTE.iter().map(|&p| (false, 7, p, 24)));
         v.extend([
-            (false, 6, 0x20),
-            (false, 6, 0x00),
-            (false, 5, 0x00),
-            (false, 5, 0x00),
-            (false, 1, 0x0a),
+            (false, 6, 0x20, 0),
+            (false, 6, 0x00, 0),
+            (false, 5, 0x00, 0),
+            (false, 5, 0x00, 0),
+            (false, 1, 0x0a, 0),
         ]);
         v
     };
     let mut want = lines;
-    for (rw, reg, val) in writes {
+    for (rw, reg, val, idle) in writes {
         for counter in (1..=24u32).rev() {
             h.access_edge(rw, reg, val, counter);
             h.half_step();
             check(&h, want.next().expect("golden ended in accesses"));
         }
         h.end_access();
+        for _ in 0..idle {
+            h.half_step();
+            check(&h, want.next().expect("golden ended in idle"));
+        }
     }
     for _ in 0..3_000usize {
         h.half_step();

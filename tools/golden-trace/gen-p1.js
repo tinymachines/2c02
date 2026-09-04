@@ -29,19 +29,26 @@ const RENDER_STEPS = 3_000;
 
 const PALETTE = [0x0f, 0x16, 0x2a, 0x12, 0x0f, 0x28, 0x14, 0x02,
                  0x0f, 0x26, 0x1a, 0x31, 0x0f, 0x30, 0x27, 0x06];
-// (rw, reg, val): the register program, mirrored in the Rust tests.
-// The $2002 read first: it resets the $2005/$2006 write toggle, whose
-// post-reset state is undefined, and without it the palette writes land
-// at a garbage address (measured before this line existed).
+// (rw, reg, val, idle): the register program, mirrored in the Rust
+// tests; idle is the half-steps of free run after the access, dumped
+// like the access edges. The $2002 read first: it resets the
+// $2005/$2006 write toggle, whose post-reset state is undefined, and
+// without it the palette writes land at a garbage address (measured
+// before this line existed). Each $2007 palette write is followed by an
+// access width of idle: written back to back, both engines lose the
+// first value and land the rest one entry early (P3's write probe,
+// 2026-09-04), so the first recording of this world rendered a palette
+// one entry off. Re-recorded paced.
 const WRITES = [
-  [1, 2, 0x00],
-  [0, 0, 0x00], [0, 1, 0x00],
-  [0, 6, 0x3f], [0, 6, 0x00],
-  ...PALETTE.map(v => [0, 7, v]),
-  [0, 6, 0x20], [0, 6, 0x00],
-  [0, 5, 0x00], [0, 5, 0x00],
-  [0, 1, 0x0a],
+  [1, 2, 0x00, 0],
+  [0, 0, 0x00, 0], [0, 1, 0x00, 0],
+  [0, 6, 0x3f, 0], [0, 6, 0x00, 0],
+  ...PALETTE.map(v => [0, 7, v, 24]),
+  [0, 6, 0x20, 0], [0, 6, 0x00, 0],
+  [0, 5, 0x00, 0], [0, 5, 0x00, 0],
+  [0, 1, 0x0a, 0],
 ];
+const IDLE_TOTAL = WRITES.reduce((a, w) => a + w[3], 0);
 
 const sandbox = {
   console,
@@ -126,7 +133,7 @@ vm.runInContext(
 );
 const run = (expr) => vm.runInContext(expr, sandbox);
 
-const lines = [`2c02 p1 golden: nodes ${run('maxNode')} preroll ${PRE_ROLL} writes ${WRITES.length} render ${RENDER_STEPS}`];
+const lines = [`2c02 p1 golden: nodes ${run('maxNode')} preroll ${PRE_ROLL} writes ${WRITES.length} idle ${IDLE_TOTAL} render ${RENDER_STEPS}`];
 const t0 = Date.now();
 for (let i = 0; i < PRE_ROLL; i++) {
   run('halfStep()');
@@ -136,7 +143,7 @@ for (let i = 0; i < PRE_ROLL; i++) {
   }
 }
 process.stderr.write('\npre-roll done, writing registers\n');
-for (const [rw, reg, val] of WRITES) {
+for (const [rw, reg, val, idle] of WRITES) {
   for (let counter = 24; counter >= 1; counter--) {
     run(`
       (function (counter, rw, reg, val) {
@@ -153,6 +160,10 @@ for (const [rw, reg, val] of WRITES) {
     lines.push(run('dump()'));
   }
   run("floatBits('io_db', 8)");
+  for (let i = 0; i < idle; i++) {
+    run('halfStep()');
+    lines.push(run('dump()'));
+  }
 }
 for (let i = 0; i < RENDER_STEPS; i++) {
   run('halfStep()');

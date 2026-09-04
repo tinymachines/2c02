@@ -11,9 +11,9 @@ fn main() {
     eprintln!("scroll world ready at half-step {}", h.half_steps);
     let (pal, _) = read_back_palette_and_oam(&mut h);
     // The read-back moved t and v; restore the scroll the world set.
-    for (reg, val) in SCROLL_PROGRAM {
+    for (reg, val, idle) in SCROLL_PROGRAM {
         h.write(reg, val);
-        h.wait(48);
+        h.wait(idle);
     }
     eprintln!("palette as held: {}", pal.iter().map(|v| format!("{v:02x}")).collect::<Vec<_>>().join(" "));
     let (cap, started) = capture_with_writes(&mut h, 240, &SCROLL_WRITES);

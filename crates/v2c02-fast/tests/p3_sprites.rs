@@ -82,13 +82,10 @@ fn the_stepper_with_sprites_matches_rung_0_on_every_visible_dot() {
     let derived: Vec<u8> = f.oam.iter().enumerate().map(|(i, &b)| if i % 4 == 2 { b & 0xe3 } else { b }).collect();
     assert_eq!(derived, g.oam.to_vec(), "OAM through the register file against the chip's read-back");
     assert_eq!((f.mask, f.ctrl, f.t, f.fine_x), (0x1e, 0, 0, 0), "the register file after the sprite program");
-    // The sprite palettes are written paced and land as written (halfphi
-    // 0.1.6), so the register file's derivation of them is held to the
-    // chip's read-back, entry for entry. The background half is the
-    // standard world's back-to-back program, which both engines land
-    // one entry early (docs/p3-report.md), and stays read back.
-    assert_eq!(&f.palette[16..], &g.palette[16..], "sprite palettes through the register file against the chip's read-back");
-    f.palette = g.palette;
+    // Every palette write in both programs is paced and lands as written
+    // (halfphi 0.1.6), so the register file's whole palette is held to
+    // the chip's read-back, entry for entry.
+    assert_eq!(f.palette, g.palette, "the palette through the register file against the chip's read-back");
     let frame = f.frame();
 
     let mut bad = Vec::new();

@@ -251,9 +251,10 @@ impl Fast {
     }
 
     /// Run a register program, write after write, as a world does
-    /// between frames.
-    pub fn run_program(&mut self, program: &[(u8, u8)]) {
-        for &(reg, val) in program {
+    /// between frames. The third field is the harness's idle after each
+    /// access, which the register file has no use for.
+    pub fn run_program(&mut self, program: &[(u8, u8, u64)]) {
+        for &(reg, val, _) in program {
             self.write(reg, val);
         }
     }

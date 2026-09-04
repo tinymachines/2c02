@@ -53,10 +53,9 @@ fn stepper(palette: [u8; 32]) -> Fast {
     f.run_program(&standard_program());
     f.write(1, 0x00);
     f.run_program(&SCROLL_PROGRAM);
-    // The register file derives the palette the world WROTE; the chip
-    // holds what its write path landed (the open question). Render from
-    // what the chip holds.
-    f.palette = palette;
+    // The palette the register file derives is the palette the chip
+    // holds (paced writes, halfphi 0.1.6).
+    assert_eq!(f.palette, palette, "the palette through the register file against the chip's read-back");
     f
 }
 

@@ -141,6 +141,15 @@ resolves high under the old rule and low under the reference's vote.
 Both engines then carry that bit into the palette write; only one of
 them should.
 
+**What else the rule was.** With the P1 world re-recorded under 0.1.6,
+the P1 golden replays bit-exact on all 10,906 nodes across all 4,008
+states with no exemption, and the P0 golden on all 601 states with
+none: the nine-node family P0 masked and the 27-node family P1 masked,
+both read as reset-less sprite-path latches whose power-on state
+silicon leaves undefined, were floating groups the two charge rules
+decided differently. There was no coin. Both reports carry the
+correction under this date.
+
 **The pixel pipeline** (`examples/p3-pal-probe.rs`, per half-step):
 `pal_d` precharges to zero through pclk0 and carries the colour through
 pclk1 (P1's finding, re-seen); `pal_ptr0..4`, the address the palette
@@ -223,22 +232,27 @@ at its dot.
 - `MUTATE=1` drops the horizontal copy from the table and 35,387 dots
   go wrong.
 
-The palette is the one register-file output not held to the chip: the
-file derives the palette the world wrote, the chip holds what its
-write path landed, and the gates render from the read-back while the
-write-path question below is open.
+The palette was at first the one register-file output not held to the
+chip: the file derived the palette the world wrote, the chip held what
+its write path landed. With the write path fixed (below) and the P1
+world re-recorded paced, every world's palette through the register
+file is held to the chip's read-back, entry for entry, in all three
+gates.
 
 ## Carried to P1, recorded here and not changed
 
-- The P1 report describes "the 16-entry palette" as if the chip held
-  what was written. It holds the shifted palette above, the model's
-  back-to-back behaviour on both engines. The P1 dot golden and the DAC
-  gate stand as measurements of what the chip did (the DAC gate
-  compared level legs against the colour on the bus, whichever it was);
-  the description is what is wrong. A world that wants its palette to
-  land writes it with idle between the entries, which on rung 0 waits
-  for the divergence above to be fixed. A director's call whether P1's
-  world is re-recorded then.
+- The P1 report described "the 16-entry palette" as if the chip held
+  what was written; it held the shifted palette above, the model's
+  back-to-back behaviour on both engines. **Re-recorded 2026-09-04**
+  (`docs/p1-report.md`, the section of that date): the standard world
+  writes each palette entry with an access width of idle, in the Rust
+  world and the generator script alike, and the chip holds the palette
+  as written, backdrop `0x0f`. The node golden, the dot golden, first
+  light and the DAC gate were regenerated from it; the P3 goldens too.
+  The first `$2007` access after the `$2006` pair still puts one bus
+  cycle out on the stale address (`$0000 <- 00`, the delayed low
+  write), which a pure-function world cannot feel and is recorded here
+  for the console's benefit.
 - P1's capture places pixel x at dot x + 4 while the contract's active
   window starts at dot 1. Where the picture sits relative to sync is a
   geometry question for the console and the real capture (N5, M4);

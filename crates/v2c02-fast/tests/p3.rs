@@ -47,10 +47,10 @@ fn stepper() -> Fast {
     f.read(2);
     f.run_program(&standard_program());
     assert_eq!((f.t, f.v, f.fine_x), (0, 0x2000, 0), "the register file after the standard program");
-    // The register file derives the palette the world wrote; the chip
-    // holds what its write path landed (docs/p3-report.md). Render from
-    // what the chip holds.
-    f.palette = palette_as_loaded();
+    // The palette the register file derives from the program is the
+    // palette the chip holds, read back by build.rs: the world writes
+    // it paced and the engine lands it as written (halfphi 0.1.6).
+    assert_eq!(f.palette, palette_as_loaded(), "the palette through the register file against the chip's read-back");
     f
 }
 

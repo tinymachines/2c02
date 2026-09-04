@@ -13,15 +13,15 @@
 //! the pin frame (the N0 contract gate). Either way the replay must
 //! diverge.
 //!
-//! The exemption is the P0 family measured wider and then CLOSED
-//! (examples/p1-diverge-probe.rs, 2026-09-02): the same undefined
-//! power-on sprite-path latches, here all eight spr_dN_in bits plus
-//! their range-gated followers and eight unnamed followers, 27 nodes,
-//! circulate their coin flips while no real sprite data has moved.
-//! Once rendering is on and sprite evaluation writes through the path,
-//! every one of them flushes, the x-flip trio included (P0 predicted
-//! that): the last divergent state is 1981, and the trailing 1,642
-//! states are bit-exact across ALL 10,906 nodes with no mask at all.
+//! No exemption. The first recording (2026-09-02) masked a 27-node
+//! family of sprite-path latches through state 1,981, read as undefined
+//! power-on state circulating until real sprite data flushed it. The
+//! re-recording (2026-09-04, the palette writes paced and halfphi 0.1.6
+//! resolving undriven groups by the reference's area vote) replays
+//! bit-exact on every node from the first state: the family was the
+//! charge rule deciding floating groups differently from the reference,
+//! not silicon leaving them undefined (examples/p1-diverge-probe.rs
+//! reports zero nodes that ever diverge). Any divergent node fails.
 
 use v2c02_sim::harness::Harness;
 use v2c02_sim::Ppu;
@@ -76,40 +76,18 @@ fn the_reference_replays_through_the_harness() {
     }
     h.wait(712_100);
     let nl = h.ppu.engine.netlist().clone();
-    // The measured 27-node family (see the module comment). Exempt only
-    // BEFORE the measured flush; after it the comparison runs unmasked.
-    let mut exempt: Vec<usize> = Vec::new();
-    for n in ["x_flip_flag_in", "/x_flip_flag_in", "x_flip_flag_in_2"] {
-        exempt.push(nl.node(n).unwrap_or_else(|| panic!("exempt node {n} missing")) as usize);
-    }
-    for bit in 0..8 {
-        for n in [
-            format!("spr_d{bit}_in"),
-            format!("/(spr_d{bit}_in_and_+sprite_in_range_reg)"),
-        ] {
-            exempt.push(nl.node(&n).unwrap_or_else(|| panic!("exempt node {n} missing")) as usize);
-        }
-    }
-    // Unnamed followers of the same latches, by id (as in P0).
-    exempt.extend([10_709usize, 10_712, 10_727, 10_731, 10_734, 10_736, 10_738, 10_740]);
-    assert_eq!(exempt.len(), 27, "the exemption list is closed");
-    // Measured: the last divergent state is 1981; from here the mask is
-    // empty. If this moves, re-measure with p1-diverge-probe, do not
-    // widen it.
-    const FLUSH_STATE: usize = 1_982;
 
     // The golden dumps one state per half-step from the first access
     // edge onward; replay the same accesses, comparing after every
-    // half-step. The access loop mirrors cpu_access but compares
-    // inside, so the protocol edges themselves are checked.
+    // half-step on every node. The access loop mirrors cpu_access but
+    // compares inside, so the protocol edges themselves are checked.
     let mut want = lines;
     let mut compared = 0usize;
     let check = |h: &Harness, want: &mut std::str::Lines, state: usize, at: &str| {
         let expect = want.next().unwrap_or_else(|| panic!("golden ended at {at}"));
         let got = h.ppu.state_line();
-        let masked = state < FLUSH_STATE;
         for (i, (a, b)) in got.bytes().zip(expect.bytes()).enumerate() {
-            if a != b && !(masked && exempt.contains(&i)) {
+            if a != b {
                 panic!(
                     "{at} (state {state}): divergence at node {i} ({})",
                     nl.name_of(i as halfphi::NodeId).unwrap_or("(unnamed)")
@@ -118,13 +96,18 @@ fn the_reference_replays_through_the_harness() {
         }
     };
 
-    let writes: Vec<(bool, u8, u8)> = {
-        let mut v = vec![(true, 2u8, 0u8), (false, 0, 0x00), (false, 1, 0x00), (false, 6, 0x3f), (false, 6, 0x00)];
-        v.extend(PALETTE.iter().map(|&p| (false, 7, p)));
-        v.extend([(false, 6, 0x20), (false, 6, 0x00), (false, 5, 0x00), (false, 5, 0x00), (false, 1, 0x0a)]);
+    // (read, register, value, idle after): the generator's WRITES. Each
+    // $2007 palette write is followed by an access width of idle, so
+    // the palette lands as written (written back to back, both engines
+    // lose the first value; docs/p3-report.md). The idle is dumped and
+    // compared like the access edges.
+    let writes: Vec<(bool, u8, u8, u64)> = {
+        let mut v = vec![(true, 2u8, 0u8, 0u64), (false, 0, 0x00, 0), (false, 1, 0x00, 0), (false, 6, 0x3f, 0), (false, 6, 0x00, 0)];
+        v.extend(PALETTE.iter().map(|&p| (false, 7, p, 24)));
+        v.extend([(false, 6, 0x20, 0), (false, 6, 0x00, 0), (false, 5, 0x00, 0), (false, 5, 0x00, 0), (false, 1, 0x0a, 0)]);
         v
     };
-    for (k, (rw, reg, val)) in writes.iter().enumerate() {
+    for (k, (rw, reg, val, idle)) in writes.iter().enumerate() {
         for counter in (1..=24u32).rev() {
             h.access_edge(*rw, *reg, *val, counter);
             h.half_step();
@@ -132,20 +115,18 @@ fn the_reference_replays_through_the_harness() {
             compared += 1;
         }
         h.end_access();
+        for i in 0..*idle {
+            h.half_step();
+            check(&h, &mut want, compared, &format!("access {k} idle {i}"));
+            compared += 1;
+        }
     }
     for i in 0..3_000usize {
         h.half_step();
         check(&h, &mut want, compared, &format!("render step {i}"));
         compared += 1;
     }
-    assert!(
-        compared > FLUSH_STATE + 1_000,
-        "too few unmasked states after the flush: {compared}"
-    );
-    eprintln!(
-        "replayed {compared} states through the harness: 27 undefined latches \
-         masked through state {}, {} states fully unmasked",
-        FLUSH_STATE - 1,
-        compared - FLUSH_STATE
-    );
+    assert!(want.next().is_none(), "the golden has more states than the replay");
+    assert!(compared >= 4_000, "too few states compared: {compared}");
+    eprintln!("replayed {compared} states through the harness, every node, no exemption");
 }

@@ -76,3 +76,15 @@ P1 will measure it rather than guess.
   itself a P1 assertion worth making.
 - Open from the sketch: whether DotFrame moves to a shared contract
   crate, and the Quietust licence courtesy note.
+
+## Superseded 2026-09-04: there was no undefined latch
+
+The nine-node exemption above was the engine, not the silicon. halfphi
+0.1.6 resolves a group with no rail and no pull by the reference's own
+area vote (until then any one charged member made it high; the 2C02's
+`getNodeValue` weighs the members' areas), and under it the P0 golden
+replays bit-exact on all 10,906 nodes across all 601 states with no
+mask, the x-flip trio included. P1's wider family closed the same way
+(`docs/p1-report.md`, its section of this date); the write-path
+divergence that led there is in `docs/p3-report.md`. The test compares
+every node; MUTATE=1 still goes red at step 0.

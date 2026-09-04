@@ -42,19 +42,30 @@ pub fn standard_world() -> Harness {
     let mut h = Harness::new(Ppu::power_on(), vram);
     h.wait(712_100);
     h.read(2);
-    for (reg, val) in standard_program() {
+    for (reg, val, idle) in standard_program() {
         h.write(reg, val);
+        h.wait(idle);
     }
     h
 }
 
+/// A register program: (register, value, half-steps of idle after the
+/// access). The idle is the harness's pacing; the stepper's register
+/// file ignores it.
+pub type Program = Vec<(u8, u8, u64)>;
+
 /// The standard world's register program after its $2002 read, in
-/// order, back to back: the one sequence `standard_world` runs on the
-/// chip and the stepper's register file runs on itself.
-pub fn standard_program() -> Vec<(u8, u8)> {
-    let mut p = vec![(0u8, 0x00u8), (1, 0x00), (6, 0x3f), (6, 0x00)];
-    p.extend(PALETTE.iter().map(|&v| (7, v)));
-    p.extend([(6, 0x20), (6, 0x00), (5, 0x00), (5, 0x00), (1, 0x0a)]);
+/// order: the one sequence `standard_world` runs on the chip, the P1
+/// golden generator scripts, and the stepper's register file runs on
+/// itself. Each $2007 palette write is followed by an access width of
+/// idle so the palette lands as written: back to back, both engines
+/// lose the first value and land the rest one entry early (the write
+/// probe, docs/p3-report.md), which is how the world was first
+/// recorded; re-recorded paced on 2026-09-04.
+pub fn standard_program() -> Program {
+    let mut p = vec![(0u8, 0x00u8, 0u64), (1, 0x00, 0), (6, 0x3f, 0), (6, 0x00, 0)];
+    p.extend(PALETTE.iter().map(|&v| (7, v, 24)));
+    p.extend([(6, 0x20, 0), (6, 0x00, 0), (5, 0x00, 0), (5, 0x00, 0), (1, 0x0a, 0)]);
     p
 }
 
@@ -144,7 +155,7 @@ pub struct TimedWrite {
 /// nametable at $2400 ($2000 = $11), a scroll of x = $25 (coarse 4,
 /// fine 5) and y = $13 (coarse 2, fine 3), background on with the
 /// left column shown ($2001 = $0A).
-pub const SCROLL_PROGRAM: [(u8, u8); 4] = [(0, 0x11), (5, 0x25), (5, 0x13), (1, 0x0a)];
+pub const SCROLL_PROGRAM: [(u8, u8, u64); 4] = [(0, 0x11, 48), (5, 0x25, 48), (5, 0x13, 48), (1, 0x0a, 48)];
 
 /// The mid-frame writes of the scroll world, the classic two: a
 /// horizontal split at line 100 (one $2005 write changes fine x at once
@@ -166,9 +177,9 @@ pub fn scroll_world() -> Harness {
     let mut h = standard_world();
     h.write(1, 0x00);
     h.wait(48);
-    for (reg, val) in SCROLL_PROGRAM {
+    for (reg, val, idle) in SCROLL_PROGRAM {
         h.write(reg, val);
-        h.wait(48);
+        h.wait(idle);
     }
     h
 }

@@ -8,6 +8,44 @@ supply-gated fix-up switched off (P0), the CHR bus serving every
 nametable byte off by one bit (the P1 replay diverges at `_db0`, state
 623), and the DAC pipeline delay perturbed by one half-step.
 
+## Re-recorded 2026-09-04
+
+Two things P3 measured changed this world and what its golden says
+(`docs/p3-report.md`, the write-path section):
+
+- **The palette lands as written now.** The register program wrote
+  its sixteen palette entries back to back, and back to back both
+  engines lose the first `$2007` value and land the rest one entry
+  early, so the world this report first described held `0x16` as its
+  backdrop and every entry one place off; nothing here could see it
+  (the DAC gate compares legs against whatever colour is on the bus,
+  and first light was eyeballed). The program now follows each palette
+  write with an access width of idle, in `standard_program` and in
+  `gen-p1.js` alike, and the chip holds `0f 16 2a 12 0f 28 14 02 0f
+  26 1a 31 0f 30 27 06`, read back paced. The first `$2007` access
+  after the `$2006` pair still puts one bus cycle out on the stale
+  address (`$0000 <- 00`, the delayed low write), which a
+  pure-function world cannot feel; recorded for the console.
+- **No exemption.** halfphi 0.1.6 resolves an undriven group by the
+  reference's own area vote (0.1.5 and before made it high on any one
+  charged member). Re-recorded under it, the P1 golden replays
+  **bit-exact on all 10,906 nodes across all 4,008 states** (26
+  accesses of 24 edges, 384 half-steps of idle, 3,000 rendering
+  half-steps), and `p1-diverge-probe` reports zero nodes that ever
+  diverge. The 27-node family below, read on 2026-09-02 as undefined
+  power-on state flushing when real sprite data moved, was the
+  engine's charge rule deciding floating sprite-path groups
+  differently from the reference; there was no coin. The test
+  compares every node from the first state; both mutations still go
+  red at the first CHR fetch after rendering starts (state 1,007).
+- The dot golden, first light and the DAC gate were regenerated from
+  the re-recorded world: the DAC fit lands on the same pinned phase
+  and delay, zero mismatches over 7,680 samples; first light's
+  backdrop is `0x0f`.
+
+The sections below are the 2026-09-02 report as written, kept as the
+record of what was measured then and how it was read.
+
 ## What closed
 
 - **The harness is the reference's own machinery, restated.** The
@@ -87,6 +125,7 @@ and a faster rung is a later milestone's problem, measured here first.
   path and a composite frame scored, not eyeballed.
 - Sprite rendering (OAM writes through $2003/$2004) is untouched; the
   27-node flush measured here says the sprite path is live and
-  agreeing once exercised.
+  agreeing once exercised. (Superseded 2026-09-04: there is no
+  family; see the section at the top.)
 - Open from P0 still open: DotFrame's home, the Quietust licence
   courtesy note.

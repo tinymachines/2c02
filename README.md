@@ -66,26 +66,28 @@ P0 (the netlist loads and settles) is closed: the 2C02 is the fourth
 chip through [halfphi](https://github.com/tinymachines/halfphi)'s
 identical calls, 16,758 transistors and 8,770 nodes agreed by both
 real parsers, power-on converging unaided, and the reference
-simulator's own trace replaying **bit-exact on 10,897 of 10,906 nodes
-across 601 states**, the other nine being reset-less sprite latches
-whose power-on state silicon itself leaves undefined (the exemption is
-closed and any tenth node fails). One finding: 38 supply-gated
-transistors that conduct permanently in silicon, absent from every
-chip halfphi had met, set conducting by `Ppu::power_on` and proven
-load-bearing by mutation.
+simulator's own trace replaying **bit-exact on all 10,906 nodes across
+601 states, no exemption** (as first recorded it masked nine
+reset-less sprite latches as undefined power-on state; under halfphi
+0.1.6's area vote they agree from state 0, and the mask is gone). One
+finding: 38 supply-gated transistors that conduct permanently in
+silicon, absent from every chip halfphi had met, set conducting by
+`Ppu::power_on` and proven load-bearing by mutation.
 
 P1 (the world, first light, the DAC) is closed
-(`docs/p1-report.md`): a harness restating the reference's own CPU and
-CHR bus machinery, a second node golden that replays the register
-program and 3,000 rendering half-steps **through the harness** (3,624
-states; the P0 exemption family, 27 nodes here, all flush once
-rendering moves real sprite data, and the trailing 1,642 states are
-bit-exact on all 10,906 nodes with no mask), first light off the
-palette bus into ntsc-crt's DotFrame, and the video DAC held to the
-transcribed level table **sample for sample: zero mismatches over
-7,680 active samples**, subcarrier phase and pipeline delay fitted
-once and pinned. Rendering-on throughput measured at ~32,900
-half-steps/s (a frame in about 22 s).
+(`docs/p1-report.md`, re-recorded 2026-09-04): a harness restating the
+reference's own CPU and CHR bus machinery, a second node golden that
+replays the register program and 3,000 rendering half-steps **through
+the harness**, **4,008 states bit-exact on all 10,906 nodes with no
+exemption at all** (the first recording masked a 27-node family of
+sprite-path latches as undefined power-on state; under halfphi 0.1.6's
+area vote they agree from the first state, so the family was the
+engine's charge rule, not the silicon), first light off the palette
+bus into ntsc-crt's DotFrame, and the video DAC held to the transcribed
+level table **sample for sample: zero mismatches over 7,680 active
+samples**, subcarrier phase and pipeline delay fitted once and pinned.
+Rendering-on throughput measured at ~32,900 half-steps/s (a frame in
+about 22 s).
 
 N0 of the console sketch is adopted:
 [nes-bus](https://github.com/tinymachines/nes-bus) is the contracts'
@@ -188,7 +190,7 @@ node tools/golden-trace/gen-p2.js    # regenerate the P2 golden (1,712
 node tools/golden-trace/gen.js       # regenerate the P0 trace
                                      # (601 states, about 5 s)
 node tools/golden-trace/gen-p1.js    # regenerate the P1 trace (712,100
-                                     # pre-roll + 3,624 states, ~40 min)
+                                     # pre-roll + 4,008 states, ~40 min)
 cargo run --release -p v2c02-sim --example bench        # quiescent throughput
 cargo run --release -p v2c02-dots --example p1-bench    # rendering-on throughput
 cargo run --release -p v2c02-dots --example first-light # goldens/p1-first-light.ppm

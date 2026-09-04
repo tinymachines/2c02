@@ -114,40 +114,15 @@ fn the_reference_trace_replays_node_for_node() {
     assert!(header.starts_with("2c02 golden:"), "not a 2c02 golden: {header}");
 
     let mut ppu = subject();
-    // The measured exemption, closed by construction: nine sprite-path
-    // input latches are dynamic storage with no reset connection, so
-    // their power-on state is genuinely undefined; both engines are
-    // deterministic about the coin and flip it differently (measured
-    // 2026-09-02: six flush by half-step 14 once real values move
-    // through them, three, the x-flip input latch and its followers,
-    // are never written in a memory-less free-run and hold theirs for
-    // the whole trace; every one of the other 10,897 nodes is
-    // bit-exact across all 601 states). Two followers are unnamed and
-    // exempted by id. The list is asserted CLOSED below because a
-    // masked comparison is only as honest as its mask is small: the
-    // 6502's rail-write bug hid behind exactly this shape of blindness.
+    // No exemption. P0 as first recorded (2026-09-02) masked nine
+    // sprite-path input latches, read as dynamic storage whose power-on
+    // state silicon leaves undefined and the two engines flip
+    // differently. Under halfphi 0.1.6, which resolves an undriven group
+    // by the reference's own area vote, every one of them agrees from
+    // state 0 (2026-09-04): the "coin" was the engine's charge rule,
+    // not the silicon. A masked comparison is only as honest as its
+    // mask is small, and the smallest mask is none.
     let nl = ppu.engine.netlist().clone();
-    let named = [
-        "x_flip_flag_in",
-        "/x_flip_flag_in",
-        "x_flip_flag_in_2",
-        "spr_d6_in",
-        "/(spr_d6_in_and_+sprite_in_range_reg)",
-        "spr_d1_in",
-        "/(spr_d1_in_and_+sprite_in_range_reg)",
-    ];
-    let persistent = ["x_flip_flag_in", "/x_flip_flag_in", "x_flip_flag_in_2"];
-    let mut exempt_early: Vec<usize> = named
-        .iter()
-        .map(|n| nl.node(n).unwrap_or_else(|| panic!("exempt node {n} missing")) as usize)
-        .collect();
-    exempt_early.extend([10_712usize, 10_738]); // unnamed followers of the same latches
-    let exempt_late: Vec<usize> = persistent
-        .iter()
-        .map(|n| nl.node(n).unwrap() as usize)
-        .collect();
-    const FLUSH_STEP: usize = 15;
-
     let mut compared = 0usize;
     for (step, want) in lines.enumerate() {
         if step > 0 {
@@ -155,20 +130,14 @@ fn the_reference_trace_replays_node_for_node() {
         }
         let got = ppu.state_line();
         assert_eq!(got.len(), want.len(), "node count differs at step {step}");
-        let allowed: &[usize] = if step < FLUSH_STEP { &exempt_early } else { &exempt_late };
         for (i, (a, b)) in got.bytes().zip(want.bytes()).enumerate() {
-            if a != b && !allowed.contains(&i) {
+            if a != b {
                 let name = nl.name_of(i as halfphi::NodeId).unwrap_or("(unnamed)");
-                panic!(
-                    "step {step}: divergence at node {i} ({name}) outside the closed exemption"
-                );
+                panic!("step {step}: divergence at node {i} ({name})");
             }
         }
         compared += 1;
     }
     assert!(compared > 100, "golden too short to mean anything: {compared}");
-    eprintln!(
-        "replayed {compared} states bit-exact outside {} undefined power-on latches",
-        exempt_early.len()
-    );
+    eprintln!("replayed {compared} states bit-exact on every node, no exemption");
 }
