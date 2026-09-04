@@ -11,6 +11,22 @@ starts at `docs/p0-report.md`.
 
 ## Status
 
+P3 step 1 (the ladder's per-dot stepper) is closed
+(`docs/p3-plan.md`, `docs/p3-report.md`): `v2c02-fast` renders the
+standard world from a sequencer table measured out of rung 0 at build
+time (one event word per dot: the fetches classified by the address
+the chip latched, the increments, the copies, the flag events) and a
+palette RAM read back out of the chip, with the datapath authored and
+labelled. It agrees with rung 0's dot golden on **every visible dot,
+62,160 per frame, no exemption**, and renders a frame in **1.004 ms
+mean against the 16.639 ms period, 16.6x inside, 996 frames per
+second** (worst 1.781 ms), so the plan's bit-sliced datapath is not
+built. Getting there produced a finding about P1's world: the 2C02
+applies the $2006 low write to v with a delay, the world's first
+back-to-back $2007 write went to the stale address, and the palette
+the chip holds is every entry one place early with `0x16` as the
+backdrop. `MUTATE=1` drops the coarse X increment and goes red.
+
 P2 (the PPU's contested corners) is closed (`docs/p2-report.md`): one
 schedule drives sprite-0, the VBL read race and OAM corruption along a
 single trajectory the reference replays blindly. Sprite 0 hits at vpos
@@ -94,6 +110,23 @@ REQUIRE_GOLDEN_P2=1 cargo test -p v2c02-sim --release --test p2
                                      # one schedule; sprite windows node-exact,
                                      # race and corrupt behavioural (see the
                                      # report). MUTATE=1 must go red.
+REQUIRE_GOLDEN_P3=1 cargo test --release -p v2c02-fast --test p3
+                                     # P3 step 1: the per-dot stepper against
+                                     # rung 0's dot golden, every visible dot,
+                                     # and against the frame period (release
+                                     # only). Building v2c02-fast runs the chip
+                                     # for a frame (about a minute) to record
+                                     # the table and the palette. MUTATE=1
+                                     # drops INC_X and must go red.
+cargo run --release -p v2c02-fast --example p3-bench -- 500   # frame time
+cargo run --release -p v2c02-fast --example p3-fit    # the golden offset, fitted
+cargo run --release -p v2c02-dots --example p3-fetch-probe -- /tmp/frame.csv
+cargo run --release -p v2c02-dots --example p3-pixel-probe
+cargo run --release -p v2c02-dots --example p3-pal-probe
+                                     # the three measurements the stepper's
+                                     # datapath was authored from (the
+                                     # sequencer, the pixel index stream and
+                                     # the palette as held)
 cargo run --release -p v2c02-sim --example p2-schedule > tools/golden-trace/p2-schedule.json
                                      # recompute the P2 schedule (the dry run
                                      # on this engine; both sides replay it)

@@ -4,4 +4,14 @@ members = [
     "crates/v2c02-netlist",
     "crates/v2c02-sim",
     "crates/v2c02-dots",
+    "crates/v2c02-fast",
 ]
+
+# build.rs in v2c02-fast runs the switch-level chip for a frame; without
+# this the build script's dependencies compile at opt-level 0 and that
+# frame takes tens of minutes instead of under a minute.
+[profile.release.build-override]
+opt-level = 3
+
+[profile.dev.build-override]
+opt-level = 3

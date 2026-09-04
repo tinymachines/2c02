@@ -251,6 +251,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "v2c02-fast"
+version = "0.1.0"
+dependencies = [
+ "nes-bus",
+ "ntsc-grid",
+ "v2c02-dots",
+ "v2c02-netlist",
+ "v2c02-sim",
+]
+
+[[package]]
 name = "v2c02-netlist"
 version = "0.1.0"
 dependencies = [
