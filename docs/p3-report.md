@@ -1,11 +1,12 @@
-# P3 report, step 1: the per-dot stepper, measured before it was built
+# P3 report: the ladder's per-dot stepper, measured before it was built
 
 `docs/p3-plan.md` set the design and the order: measure a per-dot
 table-driven stepper's frame time first, and build the bit-sliced
-datapath only on a recorded shortfall. This is what was measured.
-`crates/v2c02-fast` is the stepper; `cargo test --release -p v2c02-fast
---test p3` is the gate, `REQUIRE_GOLDEN_P3=1` insists, `MUTATE=1` must
-go red.
+datapath only on a recorded shortfall. This is what was measured, step by step: the background (the gate
+below), then sprites, then the register file and scroll, and the engine
+divergence found on the way. `crates/v2c02-fast` is the stepper; the
+gates are `tests/p3.rs`, `tests/p3_sprites.rs` and `tests/p3_scroll.rs`,
+`REQUIRE_GOLDEN_P3=1` insists, `MUTATE=1` must go red in each.
 
 ## The gate
 
