@@ -67,13 +67,37 @@ Read back paced through $2007, the RAM holds `16 2a 12 0f 28 14 02 0f
 26 1a 31 0f 30 27 06 20` at $3F00..$3F0F against the sixteen values
 the world wrote (`0f 16 2a 12 ...`): every entry one place early, the
 backdrop `0x16` rather than `0x0f`, and $3F0F never written, holding
-its power-on `0x20`. The cause is on the die: the 2C02 applies the
-$2006 low write to v with a delay (the netlist names the node
-`delayed_write_2006_low`), and the world issues its first $2007 write
-back to back, so that write went to the stale address; the harness
-captured it as a VRAM write, `$0000 <- 00`. This is a finding about
-P1's world, not about the stepper, and section "Carried to P1" says
-what it changes.
+its power-on `0x20`. The write path was then measured on its own
+(`examples/p3-write-probe.rs`: a $2006 pair, four known bytes, the row
+read back, for every combination of idle after the pair and idle
+between the writes):
+
+| idle after the pair | idle between writes | $3F11..$3F14 held (wrote 21 11 01 2a) |
+|---|---|---|
+| 0, 24, 48, 96, 192 | 0 (back to back) | `11 01 2a 3e` |
+| 0, 24, 48, 96, 192 | 24 (an access width) | `31 13 13 3e` |
+
+The idle after the pair changes nothing. Back to back, the first value
+is lost and the rest land one entry early, the last of them also
+landing once more, ORed, one entry further. Paced, every entry lands
+as `data OR (v & 0xff)`, the byte ORed with the low byte of the VRAM
+address (`21|11 = 31`, `11|12 = 13`, `01|13 = 13`, `2a|14 = 3e`). One
+mechanism gives both rows: **the $2007 write latches its data in the
+access's release slot, the same edge at which the harness releases the
+CPU data bus.** The chip then samples either the next back-to-back
+access's data (one entry early; the first value never sampled) or a
+floating bus holding the charge of the value just driven OR the
+address phase's charge on the multiplexed AD pins. A real 6502 holds
+write data past that point; the harness, which mirrors the reference's
+`cpucmd.js` statement for statement, does not, and the reference
+script does not either, which is why the P1 node golden agrees with
+it. Separately, the die does delay the $2006 low write into v (the
+node `delayed_write_2006_low`), which is why the standard world's
+first $2007 write also produced a stray CHR-bus write the harness
+captured as `$0000 <- 00`. These are findings about the harness's
+bus realism and P1's world, not about the stepper, which renders from
+the palette as measured; section "Carried to P1" says what they
+change.
 
 **The pixel pipeline** (`examples/p3-pal-probe.rs`, per half-step):
 `pal_d` precharges to zero through pclk0 and carries the colour through
@@ -89,16 +113,52 @@ contract's dot x + 1 and the gate compares at +3.
 **The fit.** Offset 3, 0 mismatches of 61,440, the minimum by a factor
 the neighbours make obvious.
 
+## Step 2: sprites
+
+The datapath gained evaluation, the sprite fetch and the priority mux,
+and is held to a second dot golden: the sprite world
+(`v2c02_dots::sprite_world`, the standard world plus four sprite
+palettes and 64 sprites, sprites on, no left-edge clipping), captured
+off rung 0 by `examples/p3-sprites-golden.rs` with the palette RAM and
+OAM read back out of the chip beside the dots, and `spr0_hit`'s and
+`spr_overflow`'s first rises recorded. The sprites exercise the four
+palettes, both flips and their combination, a sprite behind the
+background, nine sprites on one line (the eighth is the last drawn),
+the right and bottom edges, two overlapping sprites, and P2's sprite 0.
+
+- **Every visible dot agrees with rung 0 with sprites on, 61,440 per
+  frame**, on the first run of the datapath against the golden.
+- **Sprite 0's hit lands where the chip's does.** `spr0_hit` rose at
+  (92, 185) on rung 0; the stepper's first opaque-over-opaque pixel is
+  (92, 183), the measured two-dot offset between a pixel's position and
+  its arrival at the mux. P2's (91, 182) was a different world with a
+  solid background, and does not transfer.
+- **The overflow flag.** `spr_overflow` rose at (120, 143), the
+  nine-sprite line; the stepper overflows there. The dot is recorded
+  for the step that models the evaluation scan dot by dot; the flag is
+  held as a fact here.
+- `MUTATE=1` drops the sprite pattern fetches from the table and the
+  gate goes red.
+
+Evaluation is authored as one step at the sprite window (the chip
+spreads it over dots 65..256, measured), the fetch takes the table's
+SPR_PT positions slot by slot, and the eight units compose in slot
+order with the behind bit honoured against an opaque background.
+Sprites of 8x16 are not modelled and asserted off; left-edge clipping
+is not modelled and the world does not exercise it.
+
 ## Carried to P1, recorded here and not changed
 
 - The P1 report describes "the 16-entry palette" as if the chip held
-  what was written. It holds the shifted palette above. The P1 dot
-  golden and the DAC gate stand as measurements of what the chip did
-  (the DAC gate compared level legs against the colour on the bus,
-  whichever it was); the description is what is wrong. The world can
-  be paced so the first $2007 write lands, which regenerates the P1
-  golden and picture, or the report can say what the palette is. A
-  director's call.
+  what was written. It holds the shifted palette above, for the reason
+  the write probe measured. The P1 dot golden and the DAC gate stand as
+  measurements of what the chip did (the DAC gate compared level legs
+  against the colour on the bus, whichever it was); the description is
+  what is wrong. The honest fix is in the harness's bus realism: hold
+  the CPU data bus through the release edge the way a 6502 does, in the
+  Rust harness AND in the reference's generator script together, then
+  regenerate the P1 goldens. Until then any world that loads the
+  palette should read it back, as P3's do. A director's call.
 - P1's capture places pixel x at dot x + 4 while the contract's active
   window starts at dot 1. Where the picture sits relative to sync is a
   geometry question for the console and the real capture (N5, M4);

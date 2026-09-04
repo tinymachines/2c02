@@ -1,15 +1,15 @@
-//! The 2C02 ladder, step 1: a per-dot stepper. The SEQUENCER is a table
+//! The 2C02 ladder: a per-dot stepper. The SEQUENCER is a table
 //! measured out of the switch-level chip at build time (one event word
 //! per dot of a frame; `events.rs` says what each bit is and where it
-//! was read from), and the palette RAM the stepper renders with is a
-//! second build-time measurement, read back out of the chip. The
-//! DATAPATH below is authored from the proven model and labelled as
-//! such. Held to rung 0's dot golden and to the frame period in
-//! `tests/p3.rs`; the design and the measured positions it was written
-//! from are in `docs/p3-plan.md`.
+//! was read from), and the palette RAM the stepper renders the standard
+//! world with is a second build-time measurement, read back out of the
+//! chip. The DATAPATH below is authored from the proven model and
+//! labelled as such. Held to rung 0's dot goldens and to the frame
+//! period in `tests/`; the design and the measured positions it was
+//! written from are in `docs/p3-plan.md` and `docs/p3-report.md`.
 //!
-//! Step 1 renders the background. Sprites, the register file and scroll
-//! are the steps after it, inside P3.
+//! Step 1 is the background; step 2 adds sprites (evaluation, fetch and
+//! the priority mux). The register file and scroll are the steps after.
 
 use nes_bus::{DotFrame, FrameParity, ACTIVE_DOTS, ACTIVE_ROWS, DOTS_PER_LINE, LINES};
 
@@ -35,13 +35,28 @@ pub fn table() -> Vec<u16> {
     TABLE_BYTES.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect()
 }
 
-/// The palette RAM as measured. Entry 0 is the backdrop the chip
-/// actually renders with.
+/// The standard world's palette RAM as measured. Entry 0 is the
+/// backdrop the chip actually renders with.
 pub fn palette_as_loaded() -> [u8; 32] {
     assert!(table_available(), "v2c02-fast: no palette (extern/visual2c02 not fetched at build time)");
     let mut p = [0u8; 32];
     p.copy_from_slice(PALETTE_BYTES);
     p
+}
+
+/// One of the eight sprite units: the pattern row fetched for the next
+/// line, where it starts, and how it composes.
+#[derive(Clone, Copy, Default)]
+struct Unit {
+    lo: u8,
+    hi: u8,
+    x: u8,
+    palette: u8,
+    behind: bool,
+    hflip: bool,
+    /// This unit carries OAM sprite 0 (for the hit).
+    is_zero: bool,
+    active: bool,
 }
 
 /// The authored datapath. Names follow the wiki's register model (v, t,
@@ -56,8 +71,15 @@ pub struct Fast {
     vram: fn(u16) -> u8,
     /// The 32-byte palette RAM.
     pub palette: [u8; 32],
-    /// Bit 4 of $2000: the background pattern table.
+    /// The 256-byte OAM.
+    pub oam: [u8; 256],
+    /// Bit 4 of $2000: the background pattern table. Bit 3: the sprite
+    /// pattern table. Bit 5: 8x16 sprites (not modelled; asserted off).
     pub bg_table_hi: bool,
+    pub spr_table_hi: bool,
+    pub spr_16: bool,
+    /// Bit 4 of $2001. Off, the frame is step 1's exactly.
+    pub show_sprites: bool,
     pub v: u16,
     pub t: u16,
     pub fine_x: u8,
@@ -69,18 +91,28 @@ pub struct Fast {
     shift_hi: u16,
     attr_lo: u16,
     attr_hi: u16,
+    /// The secondary OAM the evaluation selected for the next line, and
+    /// the units the sprite window fetched from it.
+    sec: [(u8, u8, u8, u8, bool); 8],
+    sec_n: usize,
+    fetched: usize,
+    units: [Unit; 8],
     pub vbl: bool,
+    /// The first sprite-0 hit of the frame, as (line, pixel), and the
+    /// evaluation overflow (a ninth sprite in range on some line).
+    pub spr0_hit: Option<(usize, usize)>,
+    pub spr_overflow: bool,
 }
 
 impl Fast {
-    /// A stepper over the recorded table and palette, in the given
-    /// world's CHR space.
+    /// A stepper over the recorded table and the standard world's
+    /// measured palette, in the given world's CHR space. Sprites off.
     pub fn new(vram: fn(u16) -> u8) -> Fast {
         Fast::with_table(table(), vram, palette_as_loaded())
     }
 
     /// The same with a caller-supplied table and palette: the mutation
-    /// proof drops events from a copy and must go red.
+    /// proofs drop events from a copy and must go red.
     pub fn with_table(table: Vec<u16>, vram: fn(u16) -> u8, palette: [u8; 32]) -> Fast {
         assert_eq!(table.len(), LINES * DOTS_PER_LINE);
         // The shifters run on the eight dots that end at each INC_X: the
@@ -98,7 +130,11 @@ impl Fast {
             active,
             vram,
             palette,
+            oam: [0xff; 256],
             bg_table_hi: false,
+            spr_table_hi: false,
+            spr_16: false,
+            show_sprites: false,
             v: 0,
             t: 0,
             fine_x: 0,
@@ -110,7 +146,13 @@ impl Fast {
             shift_hi: 0,
             attr_lo: 0,
             attr_hi: 0,
+            sec: [(0xff, 0xff, 0xff, 0xff, false); 8],
+            sec_n: 0,
+            fetched: 0,
+            units: [Unit::default(); 8],
             vbl: false,
+            spr0_hit: None,
+            spr_overflow: false,
         }
     }
 
@@ -148,13 +190,13 @@ impl Fast {
         }
     }
 
-    /// The palette index the mux presents for the shifters' current
-    /// bit: pattern from the two planes, attribute above it, and a
+    /// The background's palette index for the shifters' current bit:
+    /// pattern from the two planes, attribute above it, and a
     /// transparent pattern folded to index 0 (the backdrop). The fold is
     /// measured: `pal_ptr` reads 0 wherever `pixel_color` has a zero
     /// pattern, whatever the attribute bits say.
     #[inline]
-    fn pixel(&self) -> u8 {
+    fn bg_pixel(&self) -> u8 {
         let sel = 15 - self.fine_x as u32;
         let p = (((self.shift_hi >> sel) & 1) << 1 | ((self.shift_lo >> sel) & 1)) as u8;
         if p == 0 {
@@ -162,6 +204,46 @@ impl Fast {
         }
         let a = (((self.attr_hi >> sel) & 1) << 1 | ((self.attr_lo >> sel) & 1)) as u8;
         (a << 2) | p
+    }
+
+    /// The sprite side of the mux for pixel `x` of the line being drawn:
+    /// the first unit in slot order with an opaque pattern bit under x.
+    /// Returns (palette index in the sprite half, behind, is sprite 0).
+    #[inline]
+    fn spr_pixel(&self, x: usize) -> Option<(u8, bool, bool)> {
+        for u in self.units.iter().filter(|u| u.active) {
+            let ux = u.x as usize;
+            if x < ux || x >= ux + 8 {
+                continue;
+            }
+            let col = (x - ux) as u32;
+            let bit = if u.hflip { col } else { 7 - col };
+            let p = ((u.hi >> bit) & 1) << 1 | ((u.lo >> bit) & 1);
+            if p != 0 {
+                return Some((0x10 | (u.palette << 2) | p, u.behind, u.is_zero));
+            }
+        }
+        None
+    }
+
+    /// Evaluation for the line after `line`: the sprites whose eight
+    /// rows cover it, in OAM order, the first eight kept. Authored as one
+    /// step at the sprite window; the chip spreads it over dots 65..256
+    /// (measured), which matters for the flags' timing, not the picture.
+    fn evaluate(&mut self, line: usize) {
+        self.sec_n = 0;
+        for i in 0..64 {
+            let y = self.oam[i * 4] as usize;
+            if line < y || line - y >= 8 {
+                continue;
+            }
+            if self.sec_n == 8 {
+                self.spr_overflow = true;
+                break;
+            }
+            self.sec[self.sec_n] = (self.oam[i * 4], self.oam[i * 4 + 1], self.oam[i * 4 + 2], self.oam[i * 4 + 3], i == 0);
+            self.sec_n += 1;
+        }
     }
 
     #[inline]
@@ -173,12 +255,15 @@ impl Fast {
     /// the contract's dot x + 1 (active from dot 1); rows and dots the
     /// stepper does not produce keep the backdrop. What the chip's own
     /// output pipeline adds on top of this (pixel x reaches `pal_d` three
-    /// dots later) is the golden's convention and lives in the gate that
-    /// compares against it, not here.
+    /// dots later) is the golden's convention and lives in the gates
+    /// that compare against it, not here.
     pub fn frame(&mut self) -> DotFrame {
+        assert!(!self.spr_16, "8x16 sprites are not modelled");
         let backdrop = self.colour(0);
         let mut out = DotFrame::filled(FrameParity::Even, backdrop, 0);
         let mut line = [0u8; DOTS_PER_LINE];
+        self.spr0_hit = None;
+        self.spr_overflow = false;
         // The picture's frame begins at the pre-render line: its vertical
         // copy sets v for row 0 and its dots 321..336 prefetch row 0's
         // first two tiles, so the stepper runs line 261 first, then 0
@@ -188,10 +273,25 @@ impl Fast {
         for vp in order {
             let base = vp * DOTS_PER_LINE;
             let render_line = vp < ACTIVE_ROWS || vp == LINES - 1;
+            self.fetched = 0;
+            let mut evaluated = false;
             for (hp, slot) in line.iter_mut().enumerate() {
                 let e = self.table[base + hp];
                 if render_line && self.active[base + hp] {
-                    *slot = self.pixel();
+                    let mut index = self.bg_pixel();
+                    if self.show_sprites && vp < ACTIVE_ROWS && (1..=ACTIVE_DOTS).contains(&hp) {
+                        let x = hp - 1;
+                        if let Some((s, behind, is_zero)) = self.spr_pixel(x) {
+                            let bg_opaque = index & 3 != 0;
+                            if is_zero && bg_opaque && x != 255 && self.spr0_hit.is_none() {
+                                self.spr0_hit = Some((vp, x));
+                            }
+                            if !(behind && bg_opaque) {
+                                index = s;
+                            }
+                        }
+                    }
+                    *slot = index;
                     self.shift_lo <<= 1;
                     self.shift_hi <<= 1;
                     self.attr_lo <<= 1;
@@ -213,6 +313,35 @@ impl Fast {
                     }
                     if e & FETCH_PT_HI != 0 {
                         self.pt_hi = self.read(base_addr | 8);
+                    }
+                }
+                if render_line && e & (SPR_GARBAGE | SPR_PT_LO | SPR_PT_HI) != 0 {
+                    if !evaluated {
+                        self.evaluate(vp);
+                        evaluated = true;
+                        self.units = [Unit::default(); 8];
+                    }
+                    if e & SPR_PT_LO != 0 && self.fetched < 8 {
+                        let k = self.fetched;
+                        self.fetched += 1;
+                        if k < self.sec_n {
+                            let (y, tile, attr, x, is_zero) = self.sec[k];
+                            let mut row = (vp - y as usize) as u16 & 7;
+                            if attr & 0x80 != 0 {
+                                row = 7 - row;
+                            }
+                            let addr = ((self.spr_table_hi as u16) << 12) | ((tile as u16) << 4) | row;
+                            self.units[k] = Unit {
+                                lo: self.read(addr),
+                                hi: self.read(addr | 8),
+                                x,
+                                palette: attr & 3,
+                                behind: attr & 0x20 != 0,
+                                hflip: attr & 0x40 != 0,
+                                is_zero,
+                                active: true,
+                            };
+                        }
                     }
                 }
                 if e & INC_X != 0 {
@@ -242,9 +371,6 @@ impl Fast {
                 }
             }
             if vp < ACTIVE_ROWS {
-                // The first active dot presents pixel 0: the shifters'
-                // first presentation on the line is at the first active
-                // dot (dot 1 in the recorded table).
                 for (d, &index) in line.iter().enumerate().skip(1).take(ACTIVE_DOTS) {
                     out.set(vp, d, self.colour(index), 0);
                 }

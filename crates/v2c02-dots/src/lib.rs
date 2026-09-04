@@ -54,6 +54,113 @@ pub fn standard_world() -> Harness {
     h
 }
 
+/// The three colours of each sprite palette the sprite world writes to
+/// $3F11.., $3F15.., $3F19.., $3F1D.. (entry 0 of each mirrors the
+/// backdrop and is left alone). None appears in the background palette
+/// as the chip holds it, so a sprite pixel is unmistakable in a dot diff.
+pub const SPRITE_PALETTE: [[u8; 3]; 4] = [[0x21, 0x11, 0x01], [0x24, 0x15, 0x04], [0x29, 0x19, 0x09], [0x2c, 0x1c, 0x0c]];
+
+/// The 64 sprites the sprite world loads, (y, tile, attribute, x) each;
+/// the unused ones parked at y = $F0 as P2's scenario did. What each
+/// exercises is in the comments; the tiles' patterns are whatever the
+/// world's VRAM function yields for them.
+pub fn sprite_oam() -> [u8; 256] {
+    let mut oam = [0u8; 256];
+    for s in oam.chunks_exact_mut(4) {
+        s.copy_from_slice(&[0xf0, 0, 0, 0]);
+    }
+    let mut put = |i: usize, y: u8, tile: u8, attr: u8, x: u8| oam[i * 4..i * 4 + 4].copy_from_slice(&[y, tile, attr, x]);
+    put(0, 90, 1, 0x00, 180); // P2's sprite 0, over solid background: the hit
+    put(1, 40, 3, 0x01, 20); // palette 1
+    put(2, 40, 3, 0x41, 28); // flipped horizontally
+    put(3, 40, 3, 0x81, 36); // flipped vertically
+    put(4, 40, 3, 0xc1, 44); // both flips
+    put(5, 40, 5, 0x22, 52); // behind the background, palette 2
+    for k in 0..9u8 {
+        // nine on one line: the eighth is the last one drawn
+        put(6 + k as usize, 120, 2 + k, k & 3, 16 + 24 * k);
+    }
+    put(15, 200, 4, 0x03, 250); // off the right edge
+    put(16, 236, 6, 0x00, 100); // off the bottom
+    put(17, 60, 2, 0x00, 100); // two overlapping: the lower index wins
+    put(18, 62, 4, 0x01, 104);
+    oam
+}
+
+/// The sprite world: the standard world with rendering paused, the four
+/// sprite palettes and the 64 sprites loaded with an access-width of
+/// idle after every write (P2's pacing finding) and the delayed $2006
+/// load waited out (P3's), t restored the way the standard world sets
+/// it, and rendering resumed with sprites on and no left-edge clipping
+/// (mask $1E).
+pub fn sprite_world() -> Harness {
+    let mut h = standard_world();
+    h.write(1, 0x00);
+    h.wait(24);
+    // The $2006 pair is waited out (the delayed low write), then each
+    // triple is written back to back. Measured (docs/p3-report.md): a
+    // $2007 palette write with an access-width of idle after it lands as
+    // data OR the low byte of v, while back-to-back writes land as
+    // written; the read-back beside the golden records what held.
+    for (p, cols) in SPRITE_PALETTE.iter().enumerate() {
+        h.write(6, 0x3f);
+        h.wait(24);
+        h.write(6, 0x11 + 4 * p as u8);
+        h.wait(48);
+        for &c in cols {
+            h.write(7, c);
+        }
+        h.wait(24);
+    }
+    h.write(3, 0x00);
+    h.wait(24);
+    for &b in sprite_oam().iter() {
+        h.write(4, b);
+        h.wait(24);
+    }
+    for (reg, val) in [(6u8, 0x20u8), (6, 0x00), (5, 0x00), (5, 0x00)] {
+        h.write(reg, val);
+        h.wait(48);
+    }
+    h.write(1, 0x1e);
+    h
+}
+
+/// Read the palette RAM (32) and OAM (256) back out of the chip in
+/// vblank, paced, the way the P3 recorder does, so a world's contents
+/// are a measurement. Leaves the chip in vblank with rendering as it was.
+pub fn read_back_palette_and_oam(h: &mut Harness) -> ([u8; 32], [u8; 256]) {
+    let taps = Taps::new(h);
+    while taps.bus(h, &taps.vpos) != 242 {
+        h.half_step();
+    }
+    h.write(6, 0x3f);
+    h.wait(24);
+    h.write(6, 0x00);
+    h.wait(48);
+    let mut pal = [0u8; 32];
+    for p in pal.iter_mut() {
+        *p = h.read(7);
+        h.wait(24);
+    }
+    let mut oam = [0u8; 256];
+    for (i, o) in oam.iter_mut().enumerate() {
+        h.write(3, i as u8);
+        h.wait(24);
+        *o = h.read(4);
+        h.wait(24);
+    }
+    h.write(3, 0);
+    h.wait(24);
+    // Reading $2007 moved v; put t back the way the world had it so the
+    // pre-render copies restore the picture.
+    for (reg, val) in [(6u8, 0x20u8), (6, 0x00), (5, 0x00), (5, 0x00)] {
+        h.write(reg, val);
+        h.wait(48);
+    }
+    (pal, oam)
+}
+
 /// The taps this crate reads.
 pub struct Taps {
     pub hpos: [NodeId; 9],
@@ -164,6 +271,10 @@ pub struct Captured {
     /// Per half-step from the frame's first: (hpos, vpos, leg mask,
     /// emph level).
     pub trace: Vec<(u16, u16, u16, bool)>,
+    /// The (vpos, hpos) at which `spr0_hit` first rose in the captured
+    /// frame, and the same for `spr_overflow`; `None` if never.
+    pub spr0_hit: Option<(u16, u16)>,
+    pub spr_overflow: Option<(u16, u16)>,
 }
 
 /// Run to the frame boundary and capture `rows` scanlines of dots (and
@@ -177,9 +288,15 @@ pub fn capture(h: &mut Harness, rows: usize) -> Captured {
     while !(taps.bus(h, &taps.vpos) == 261 && taps.bus(h, &taps.hpos) == 340) {
         h.half_step();
     }
+    let nl = h.ppu.engine.netlist().clone();
+    let hit_node = nl.node("spr0_hit").expect("node spr0_hit");
+    let ovf_node = nl.node("spr_overflow").expect("node spr_overflow");
     let mut dots = DotFrame::filled(FrameParity::Even, 0x0f, 0);
     let mut trace = Vec::new();
     let mut seen_pclk1 = false;
+    let mut spr0_hit = None;
+    let mut spr_overflow = None;
+    let (mut was_hit, mut was_ovf) = (h.ppu.engine.is_high(hit_node), h.ppu.engine.is_high(ovf_node));
     loop {
         h.half_step();
         let hp = taps.bus(h, &taps.hpos) as u16;
@@ -187,6 +304,15 @@ pub fn capture(h: &mut Harness, rows: usize) -> Captured {
         if vp as usize >= rows && vp != 261 {
             break;
         }
+        let (hit, ovf) = (h.ppu.engine.is_high(hit_node), h.ppu.engine.is_high(ovf_node));
+        if hit && !was_hit && spr0_hit.is_none() {
+            spr0_hit = Some((vp, hp));
+        }
+        if ovf && !was_ovf && spr_overflow.is_none() {
+            spr_overflow = Some((vp, hp));
+        }
+        was_hit = hit;
+        was_ovf = ovf;
         trace.push((hp, vp, taps.leg_mask(h), h.ppu.engine.is_high(taps.emph)));
         // Sample the colour once per dot, on the second pclk1 half-step.
         let p1 = h.ppu.engine.is_high(taps.pclk1);
@@ -198,5 +324,5 @@ pub fn capture(h: &mut Harness, rows: usize) -> Captured {
             seen_pclk1 = p1;
         }
     }
-    Captured { dots, trace }
+    Captured { dots, trace, spr0_hit, spr_overflow }
 }

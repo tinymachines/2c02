@@ -11,21 +11,28 @@ starts at `docs/p0-report.md`.
 
 ## Status
 
-P3 step 1 (the ladder's per-dot stepper) is closed
-(`docs/p3-plan.md`, `docs/p3-report.md`): `v2c02-fast` renders the
-standard world from a sequencer table measured out of rung 0 at build
-time (one event word per dot: the fetches classified by the address
+P3 steps 1 and 2 (the ladder's per-dot stepper, background then
+sprites) are closed (`docs/p3-plan.md`, `docs/p3-report.md`):
+`v2c02-fast` renders the standard world from a sequencer table
+measured out of rung 0 at build time (one event word per dot: the fetches classified by the address
 the chip latched, the increments, the copies, the flag events) and a
 palette RAM read back out of the chip, with the datapath authored and
 labelled. It agrees with rung 0's dot golden on **every visible dot,
 62,160 per frame, no exemption**, and renders a frame in **1.004 ms
 mean against the 16.639 ms period, 16.6x inside, 996 frames per
 second** (worst 1.781 ms), so the plan's bit-sliced datapath is not
-built. Getting there produced a finding about P1's world: the 2C02
-applies the $2006 low write to v with a delay, the world's first
-back-to-back $2007 write went to the stale address, and the palette
-the chip holds is every entry one place early with `0x16` as the
-backdrop. `MUTATE=1` drops the coarse X increment and goes red.
+built. With sprites on, against a second golden whose palette RAM and
+OAM are read back out of the chip, **every visible dot agrees again**,
+sprite 0's hit lands where the chip's `spr0_hit` rose and the overflow
+where `spr_overflow` did. Getting there produced a finding about the
+harness's bus realism: a $2007 write latches in the access's release
+slot, the edge the harness releases the CPU data bus on, so a
+back-to-back write lands the next value one entry early and a paced
+write lands the byte ORed with the address low byte; the palette P1's
+world holds is every entry one place early with `0x16` as the
+backdrop, and the report says what to do about it. `MUTATE=1` drops
+the coarse X increment (step 1) or the sprite fetches (step 2) and
+goes red.
 
 P2 (the PPU's contested corners) is closed (`docs/p2-report.md`): one
 schedule drives sprite-0, the VBL read race and OAM corruption along a
@@ -118,6 +125,20 @@ REQUIRE_GOLDEN_P3=1 cargo test --release -p v2c02-fast --test p3
                                      # for a frame (about a minute) to record
                                      # the table and the palette. MUTATE=1
                                      # drops INC_X and must go red.
+REQUIRE_GOLDEN_P3=1 cargo test --release -p v2c02-fast --test p3_sprites
+                                     # P3 step 2: the stepper with sprites on
+                                     # against the sprite world golden, every
+                                     # visible dot, plus spr0_hit and the
+                                     # overflow against the chip's own flag
+                                     # rises. MUTATE=1 drops the sprite
+                                     # fetches and must go red.
+cargo run --release -p v2c02-dots --example p3-sprites-golden
+                                     # record the sprite golden off rung 0
+                                     # (palette and OAM read back, flags,
+                                     # dots; about a minute)
+cargo run --release -p v2c02-dots --example p3-write-probe
+                                     # the $2007 write path: what lands, by
+                                     # idle after the pair and between writes
 cargo run --release -p v2c02-fast --example p3-bench -- 500   # frame time
 cargo run --release -p v2c02-fast --example p3-fit    # the golden offset, fitted
 cargo run --release -p v2c02-dots --example p3-fetch-probe -- /tmp/frame.csv
