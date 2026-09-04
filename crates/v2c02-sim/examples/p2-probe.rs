@@ -86,12 +86,6 @@ fn main() {
     let n = |name: &str| nl.node(name).unwrap_or_else(|| panic!("node {name}"));
     let hpos: Vec<_> = (0..9).map(|i| n(&format!("hpos{i}"))).collect();
     let vpos: Vec<_> = (0..9).map(|i| n(&format!("vpos{i}"))).collect();
-    let in_vbl = n("in_vblank");
-    let set_vbl = n("set_vbl_flag");
-    let set_hit = n("set_spr0_hit");
-    let spr0_active = n("spr0_active");
-    let in_range = n("sprite_in_range");
-    let copy_spr = n("copy_sprite_to_sec_oam");
     let bits = |h: &Harness, ns: &[halfphi::NodeId]| -> u32 {
         ns.iter()
             .enumerate()
@@ -106,29 +100,21 @@ fn main() {
         bits(&h, &hpos)
     );
 
-    // The reference's own checkpoints (gen-p2-probe.js), for the
-    // side-by-side: spr0_p through the fetch and display lines.
-    let sp: Vec<_> = (0..8).map(|i| n(&format!("spr0_p{i}"))).collect();
+    // The exact rise of spr0_hit, to the half-step.
     let s_hit = n("spr0_hit");
-    let checkpoints: [(u32, u32); 8] = [
-        (SPR_Y as u32, 250),
-        (SPR_Y as u32, 300),
-        (SPR_Y as u32, 330),
-        (SPR_Y as u32 + 1, 1),
-        (SPR_Y as u32 + 1, 60),
-        (SPR_Y as u32 + 1, 120),
-        (SPR_Y as u32 + 1, 178),
-        (SPR_Y as u32 + 1, 200),
-    ];
-    for (tv, th) in checkpoints {
-        while !(bits(&h, &vpos) == tv && bits(&h, &hpos) >= th) {
-            h.half_step();
+    let mut was = h.ppu.engine.is_high(s_hit);
+    loop {
+        h.half_step();
+        let now = h.ppu.engine.is_high(s_hit);
+        if now && !was {
+            println!(
+                "spr0_hit rises: half_steps {} vpos {} hpos {}",
+                h.half_steps,
+                bits(&h, &vpos),
+                bits(&h, &hpos)
+            );
+            break;
         }
-        println!(
-            "vpos {tv} hpos {}: spr0_p {} spr0_hit {}",
-            bits(&h, &hpos),
-            bits(&h, &sp),
-            h.ppu.engine.is_high(s_hit) as u8
-        );
+        was = now;
     }
 }

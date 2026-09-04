@@ -11,6 +11,25 @@ starts at `docs/p0-report.md`.
 
 ## Status
 
+P2 (the PPU's contested corners) is closed (`docs/p2-report.md`): one
+schedule drives sprite-0, the VBL read race and OAM corruption along a
+single trajectory the reference replays blindly. Sprite 0 hits at vpos
+91, hpos 182 (its authored x plus the two-dot delay), and the two
+sprite windows replay **bit-exact node for node, 600 states, no
+exemption**. Getting there produced the family's first proven engine
+divergence and its fix: the `spr_d` OAM data lines are the eight nodes
+the reference special-cases on both-rail groups, and halfphi 0.1.5's
+**rail-conflict hold** (an area-weighted charge vote, the reference's
+own rule) is what makes the sprite x reach its counter. The VBL race's
+three alignments return bit 7 [0, 0, 1] (miss, suppress, consume), a
+miss window about a dot and a half wide, cross-checked against the
+reference's own sampled D7; OAM shows no corruption under either
+documented trigger, byte 2 reading back masked to 0xE3. The race and
+corrupt windows are verified behaviourally, for reasons the report
+states: a genuine metastability boundary and undefined attribute-bit
+DRAM cells are each the wrong thing for a node golden to judge.
+`MUTATE=1` goes red on the sprite path.
+
 P0 (the netlist loads and settles) is closed: the 2C02 is the fourth
 chip through [halfphi](https://github.com/tinymachines/halfphi)'s
 identical calls, 16,758 transistors and 8,770 nodes agreed by both
@@ -53,7 +72,7 @@ red.
 ## Commands
 
 ```bash
-bash tools/fetch-netlist.sh          # Quietust's Visual 2C02, five files,
+bash tools/fetch-netlist.sh          # Quietust's Visual 2C02, eight files,
                                      # sha256-pinned (never committed)
 cargo test --workspace --release     # counts, convergence, both goldens,
                                      # the DAC gate; tests SKIP by name
@@ -68,6 +87,16 @@ MUTATE=rd cargo test -p v2c02-sim --release --test golden_p1
                                      # the fourth red, the N0 contract gate:
                                      # /RD's polarity flipped in the nes-bus
                                      # PpuPins frame the CHR bus reads
+REQUIRE_GOLDEN_P2=1 cargo test -p v2c02-sim --release --test p2
+                                     # P2: sprite-0, the VBL race, OAM, from
+                                     # one schedule; sprite windows node-exact,
+                                     # race and corrupt behavioural (see the
+                                     # report). MUTATE=1 must go red.
+cargo run --release -p v2c02-sim --example p2-schedule > tools/golden-trace/p2-schedule.json
+                                     # recompute the P2 schedule (the dry run
+                                     # on this engine; both sides replay it)
+node tools/golden-trace/gen-p2.js    # regenerate the P2 golden (1,712
+                                     # windowed states, ~3 h)
 node tools/golden-trace/gen.js       # regenerate the P0 trace
                                      # (601 states, about 5 s)
 node tools/golden-trace/gen-p1.js    # regenerate the P1 trace (712,100
