@@ -74,17 +74,19 @@ red.
 ```bash
 bash tools/fetch-netlist.sh          # Quietust's Visual 2C02, eight files,
                                      # sha256-pinned (never committed)
-cargo test --workspace --release     # counts, convergence, both goldens,
-                                     # the DAC gate; tests SKIP by name
-                                     # without the extern or a golden;
+cargo test --workspace --release     # counts, convergence, the three
+                                     # goldens, the DAC gate; tests SKIP by
+                                     # name without the extern or a golden;
                                      # REQUIRE_NETLIST=1 / REQUIRE_GOLDEN=1
-                                     # / REQUIRE_GOLDEN_P1=1 insist
-MUTATE=1 cargo test --workspace --release   # must go red three ways: the
+                                     # / REQUIRE_GOLDEN_P1=1 /
+                                     # REQUIRE_GOLDEN_P2=1 insist
+MUTATE=1 cargo test --workspace --release   # must go red four ways: the
                                      # supply-gated fix-up off, the CHR bus
                                      # serving a wrong byte, the DAC delay
-                                     # off by one
+                                     # off by one, the P2 world's background
+                                     # made transparent
 MUTATE=rd cargo test -p v2c02-sim --release --test golden_p1
-                                     # the fourth red, the N0 contract gate:
+                                     # the fifth red, the N0 contract gate:
                                      # /RD's polarity flipped in the nes-bus
                                      # PpuPins frame the CHR bus reads
 REQUIRE_GOLDEN_P2=1 cargo test -p v2c02-sim --release --test p2

@@ -148,17 +148,25 @@ fn the_schedule_replays_and_the_behaviour_holds() {
         ns.iter().enumerate().map(|(i, &nd)| (h.ppu.engine.is_high(nd) as u32) << i).sum()
     };
 
-    // Which window a half-step sits in, and how it is treated. The
-    // sprite and race windows are compared node for node outside a
-    // CLOSED six-cell exemption; the corrupt window's golden lines are
-    // consumed but not compared, for a reason the report states in
-    // full: OAM byte 2's unimplemented attribute bits (2..=4) are
-    // physical DRAM cells no $2004 write can drive, their power-on
-    // coins differ between the engines, and the parked-OAMADDR frame
-    // makes evaluation read the rows they sit on, so the coins join
-    // real reads and a node golden over that frame is a coin toss by
-    // construction, on both engines. The corruption claim rests on the
-    // architectural read-back below instead.
+    // Which window a half-step sits in, and how it is treated. The two
+    // sprite windows are compared node for node, every node, no
+    // exemption. The race and corrupt windows have their golden lines
+    // consumed but not compared, and are verified by the architectural
+    // asserts below instead, for two different reasons the report
+    // states in full:
+    //
+    // - Race: the read is placed at a metastability boundary by design,
+    //   and the two engines thread it along different internal I/O-path
+    //   trajectories (54 to 68 nodes on the $2002 read path) while
+    //   agreeing on every observable. The reference's own sampled D7 at
+    //   the three race reads, read back out of its golden at the sample
+    //   edges, is [0, 0, 1], the same as this engine's. Node-masking the
+    //   very vblank-read nodes the test exists to check would defeat it.
+    // - Corrupt: OAM byte 2's unimplemented attribute bits (2..=4) are
+    //   physical DRAM cells no $2004 write can drive, their power-on
+    //   coins differ between the engines, and the parked-OAMADDR frame
+    //   makes evaluation read the rows they sit on, so a node golden over
+    //   that frame is a coin toss by construction, on both engines.
     enum Win {
         Compare,
         Consume,
@@ -166,15 +174,6 @@ fn the_schedule_replays_and_the_behaviour_holds() {
     let window_of = |hs: u64| -> Option<Win> {
         for (name, a, b) in sched.windows.iter() {
             if hs > *a && hs <= *b {
-                // Sprite windows are pure chip behaviour and compare node
-                // for node. Race and corrupt windows are verified by the
-                // architectural asserts below and their golden lines are
-                // consumed unjudged: the race window sits on a live,
-                // harness-driven $2002 read whose I/O-path nodes disagree
-                // between the engines in a way not yet explained (the
-                // sampled bit-7 result agrees; the internal representation
-                // during the access does not), and node-masking the very
-                // vblank-read nodes the test checks would defeat it.
                 let behavioural = name.starts_with("corrupt") || name.starts_with("race");
                 return Some(if behavioural { Win::Consume } else { Win::Compare });
             }
