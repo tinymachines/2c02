@@ -8,7 +8,7 @@
 
 use nes_bus::{ACTIVE_DOTS, ACTIVE_ROWS, DOTS_PER_LINE, LINES, SAMPLES_PER_DOT};
 use ntsc_grid::SampleRate;
-use v2c02_dots::vram;
+use v2c02_dots::{standard_program, vram};
 use v2c02_fast::{table, palette_as_loaded, Fast, INC_X};
 
 /// Where the golden holds pixel x: rung 0's `pal_d` presents pixel x at
@@ -40,8 +40,17 @@ fn stepper() -> Fast {
         t.iter_mut().for_each(|e| *e &= !INC_X);
     }
     let mut f = Fast::with_table(t, vram, palette_as_loaded());
-    f.t = 0;
-    f.v = 0x2000;
+    // The standard world as a register program through the register
+    // file: its $2002 read, then the writes. That leaves t = 0 (the
+    // $2005 pair follows the $2006 pair) and v = $2000 until the
+    // pre-render copies; asserted, since the program is the claim.
+    f.read(2);
+    f.run_program(&standard_program());
+    assert_eq!((f.t, f.v, f.fine_x), (0, 0x2000, 0), "the register file after the standard program");
+    // The register file derives the palette the world wrote; the chip
+    // holds what its write path landed (docs/p3-report.md). Render from
+    // what the chip holds.
+    f.palette = palette_as_loaded();
     f
 }
 

@@ -8,8 +8,10 @@
 //! period in `tests/`; the design and the measured positions it was
 //! written from are in `docs/p3-plan.md` and `docs/p3-report.md`.
 //!
-//! Step 1 is the background; step 2 adds sprites (evaluation, fetch and
-//! the priority mux). The register file and scroll are the steps after.
+//! Step 1 is the background; step 2 sprites (evaluation, fetch and the
+//! priority mux); step 3 the register file, so a world is a register
+//! program rather than fields set by hand, and writes land mid-frame at
+//! their dots.
 
 use nes_bus::{DotFrame, FrameParity, ACTIVE_DOTS, ACTIVE_ROWS, DOTS_PER_LINE, LINES};
 
@@ -44,6 +46,16 @@ pub fn palette_as_loaded() -> [u8; 32] {
     p
 }
 
+/// A register write inside a frame, applied on the first half-step of
+/// dot (vpos, hpos) of the stepper's traversal.
+#[derive(Clone, Copy, Debug)]
+pub struct DotWrite {
+    pub vpos: usize,
+    pub hpos: usize,
+    pub reg: u8,
+    pub val: u8,
+}
+
 /// One of the eight sprite units: the pattern row fetched for the next
 /// line, where it starts, and how it composes.
 #[derive(Clone, Copy, Default)]
@@ -60,7 +72,7 @@ struct Unit {
 }
 
 /// The authored datapath. Names follow the wiki's register model (v, t,
-/// fine x) because that model is what P1 and P2 proved this chip
+/// fine x, w) because that model is what P1 and P2 proved this chip
 /// implements; the POSITIONS at which anything happens come only from
 /// the table.
 pub struct Fast {
@@ -73,16 +85,20 @@ pub struct Fast {
     pub palette: [u8; 32],
     /// The 256-byte OAM.
     pub oam: [u8; 256],
-    /// Bit 4 of $2000: the background pattern table. Bit 3: the sprite
-    /// pattern table. Bit 5: 8x16 sprites (not modelled; asserted off).
-    pub bg_table_hi: bool,
-    pub spr_table_hi: bool,
-    pub spr_16: bool,
-    /// Bit 4 of $2001. Off, the frame is step 1's exactly.
-    pub show_sprites: bool,
+    /// $2000 and $2001 as last written. 8x16 sprites (bit 5 of $2000)
+    /// and left-edge clipping (bits 1, 2 of $2001) are not modelled.
+    pub ctrl: u8,
+    pub mask: u8,
     pub v: u16,
     pub t: u16,
     pub fine_x: u8,
+    /// The first/second write toggle shared by $2005 and $2006.
+    pub w: bool,
+    pub oamaddr: u8,
+    read_buffer: u8,
+    /// $2007 writes outside the palette, captured rather than stored:
+    /// the worlds' VRAM is a pure function, on the chip and here.
+    pub vram_writes: Vec<(u16, u8)>,
     nt: u8,
     at: u8,
     pt_lo: u8,
@@ -106,7 +122,7 @@ pub struct Fast {
 
 impl Fast {
     /// A stepper over the recorded table and the standard world's
-    /// measured palette, in the given world's CHR space. Sprites off.
+    /// measured palette, in the given world's CHR space.
     pub fn new(vram: fn(u16) -> u8) -> Fast {
         Fast::with_table(table(), vram, palette_as_loaded())
     }
@@ -131,13 +147,15 @@ impl Fast {
             vram,
             palette,
             oam: [0xff; 256],
-            bg_table_hi: false,
-            spr_table_hi: false,
-            spr_16: false,
-            show_sprites: false,
+            ctrl: 0,
+            mask: 0,
             v: 0,
             t: 0,
             fine_x: 0,
+            w: false,
+            oamaddr: 0,
+            read_buffer: 0,
+            vram_writes: Vec::new(),
             nt: 0,
             at: 0,
             pt_lo: 0,
@@ -156,8 +174,112 @@ impl Fast {
         }
     }
 
+    // The register file, authored from the model the chip was proved to
+    // implement. Each write is what the chip does with the byte; WHEN a
+    // mid-frame write takes effect relative to its access is the
+    // scroll golden's fit, not something typed here.
+
+    /// A CPU write to $2000 + reg.
+    pub fn write(&mut self, reg: u8, val: u8) {
+        match reg & 7 {
+            0 => {
+                self.ctrl = val;
+                self.t = (self.t & !0x0c00) | (((val & 3) as u16) << 10);
+            }
+            1 => self.mask = val,
+            3 => self.oamaddr = val,
+            4 => {
+                self.oam[self.oamaddr as usize] = val;
+                self.oamaddr = self.oamaddr.wrapping_add(1);
+            }
+            5 => {
+                if !self.w {
+                    self.t = (self.t & !0x001f) | (val >> 3) as u16;
+                    self.fine_x = val & 7;
+                } else {
+                    self.t = (self.t & !0x73e0) | (((val & 7) as u16) << 12) | (((val >> 3) as u16) << 5);
+                }
+                self.w = !self.w;
+            }
+            6 => {
+                if !self.w {
+                    self.t = (self.t & 0x00ff) | (((val & 0x3f) as u16) << 8);
+                } else {
+                    self.t = (self.t & 0xff00) | val as u16;
+                    self.v = self.t;
+                }
+                self.w = !self.w;
+            }
+            7 => {
+                let a = self.v & 0x3fff;
+                if a >= 0x3f00 {
+                    self.palette[Self::palette_index(a)] = val & 0x3f;
+                } else {
+                    self.vram_writes.push((a, val));
+                }
+                self.v = self.v.wrapping_add(self.increment()) & 0x7fff;
+            }
+            _ => {}
+        }
+    }
+
+    /// A CPU read of $2000 + reg.
+    pub fn read(&mut self, reg: u8) -> u8 {
+        match reg & 7 {
+            2 => {
+                let s = ((self.vbl as u8) << 7) | ((self.spr0_hit.is_some() as u8) << 6) | ((self.spr_overflow as u8) << 5);
+                self.vbl = false;
+                self.w = false;
+                s
+            }
+            4 => self.oam[self.oamaddr as usize],
+            7 => {
+                let a = self.v & 0x3fff;
+                let out = if a >= 0x3f00 {
+                    self.read_buffer = self.read_vram(a & 0x2fff);
+                    self.palette[Self::palette_index(a)]
+                } else {
+                    let out = self.read_buffer;
+                    self.read_buffer = self.read_vram(a);
+                    out
+                };
+                self.v = self.v.wrapping_add(self.increment()) & 0x7fff;
+                out
+            }
+            _ => 0,
+        }
+    }
+
+    /// Run a register program, write after write, as a world does
+    /// between frames.
+    pub fn run_program(&mut self, program: &[(u8, u8)]) {
+        for &(reg, val) in program {
+            self.write(reg, val);
+        }
+    }
+
     #[inline]
-    fn read(&self, addr: u16) -> u8 {
+    fn increment(&self) -> u16 {
+        if self.ctrl & 4 != 0 {
+            32
+        } else {
+            1
+        }
+    }
+
+    /// $3F00..$3F1F, with $3F10/$14/$18/$1C mirroring $3F00/$04/$08/$0C.
+    #[inline]
+    fn palette_index(a: u16) -> usize {
+        let i = (a & 0x1f) as usize;
+        if i & 0x13 == 0x10 {
+            i & !0x10
+        } else {
+            i
+        }
+    }
+
+    #[inline]
+    fn read_vram(&self, addr: u16) -> u8 {
         (self.vram)(addr & 0x3fff)
     }
 
@@ -251,19 +373,28 @@ impl Fast {
         self.palette[index as usize & 0x1f] & 0x3f
     }
 
-    /// Render one frame from the current v/t. Pixel x of row y lands at
-    /// the contract's dot x + 1 (active from dot 1); rows and dots the
-    /// stepper does not produce keep the backdrop. What the chip's own
-    /// output pipeline adds on top of this (pixel x reaches `pal_d` three
-    /// dots later) is the golden's convention and lives in the gates
-    /// that compare against it, not here.
+    /// Render one frame from the current register state.
     pub fn frame(&mut self) -> DotFrame {
-        assert!(!self.spr_16, "8x16 sprites are not modelled");
+        self.frame_with_writes(&[])
+    }
+
+    /// Render one frame with register writes applied at their dots.
+    /// Pixel x of row y lands at the contract's dot x + 1 (active from
+    /// dot 1); rows and dots the stepper does not produce keep the
+    /// backdrop. What the chip's own output pipeline adds on top of this
+    /// (pixel x reaches `pal_d` three dots later) is the golden's
+    /// convention and lives in the gates that compare against it, not
+    /// here. `writes` must be in traversal order (the pre-render line
+    /// first, then lines 0..).
+    pub fn frame_with_writes(&mut self, writes: &[DotWrite]) -> DotFrame {
+        assert!(self.ctrl & 0x20 == 0, "8x16 sprites are not modelled");
+        let show_sprites = self.mask & 0x10 != 0;
         let backdrop = self.colour(0);
         let mut out = DotFrame::filled(FrameParity::Even, backdrop, 0);
         let mut line = [0u8; DOTS_PER_LINE];
         self.spr0_hit = None;
         self.spr_overflow = false;
+        let mut next_write = 0usize;
         // The picture's frame begins at the pre-render line: its vertical
         // copy sets v for row 0 and its dots 321..336 prefetch row 0's
         // first two tiles, so the stepper runs line 261 first, then 0
@@ -276,10 +407,15 @@ impl Fast {
             self.fetched = 0;
             let mut evaluated = false;
             for (hp, slot) in line.iter_mut().enumerate() {
+                while next_write < writes.len() && writes[next_write].vpos == vp && writes[next_write].hpos == hp {
+                    let w = writes[next_write];
+                    self.write(w.reg, w.val);
+                    next_write += 1;
+                }
                 let e = self.table[base + hp];
                 if render_line && self.active[base + hp] {
                     let mut index = self.bg_pixel();
-                    if self.show_sprites && vp < ACTIVE_ROWS && (1..=ACTIVE_DOTS).contains(&hp) {
+                    if show_sprites && vp < ACTIVE_ROWS && (1..=ACTIVE_DOTS).contains(&hp) {
                         let x = hp - 1;
                         if let Some((s, behind, is_zero)) = self.spr_pixel(x) {
                             let bg_opaque = index & 3 != 0;
@@ -298,21 +434,22 @@ impl Fast {
                     self.attr_hi <<= 1;
                 }
                 if e & FETCH_NT != 0 {
-                    self.nt = self.read(0x2000 | (self.v & 0x0fff));
+                    self.nt = self.read_vram(0x2000 | (self.v & 0x0fff));
                 }
                 if e & FETCH_AT != 0 {
                     let a = 0x23c0 | (self.v & 0x0c00) | ((self.v >> 4) & 0x38) | ((self.v >> 2) & 0x07);
-                    let byte = self.read(a);
+                    let byte = self.read_vram(a);
                     let shift = ((self.v >> 4) & 4) | (self.v & 2);
                     self.at = (byte >> shift) & 3;
                 }
                 if e & (FETCH_PT_LO | FETCH_PT_HI) != 0 {
-                    let base_addr = ((self.bg_table_hi as u16) << 12) | ((self.nt as u16) << 4) | ((self.v >> 12) & 7);
+                    let bg_hi = (self.ctrl & 0x10 != 0) as u16;
+                    let base_addr = (bg_hi << 12) | ((self.nt as u16) << 4) | ((self.v >> 12) & 7);
                     if e & FETCH_PT_LO != 0 {
-                        self.pt_lo = self.read(base_addr);
+                        self.pt_lo = self.read_vram(base_addr);
                     }
                     if e & FETCH_PT_HI != 0 {
-                        self.pt_hi = self.read(base_addr | 8);
+                        self.pt_hi = self.read_vram(base_addr | 8);
                     }
                 }
                 if render_line && e & (SPR_GARBAGE | SPR_PT_LO | SPR_PT_HI) != 0 {
@@ -330,10 +467,11 @@ impl Fast {
                             if attr & 0x80 != 0 {
                                 row = 7 - row;
                             }
-                            let addr = ((self.spr_table_hi as u16) << 12) | ((tile as u16) << 4) | row;
+                            let spr_hi = (self.ctrl & 0x08 != 0) as u16;
+                            let addr = (spr_hi << 12) | ((tile as u16) << 4) | row;
                             self.units[k] = Unit {
-                                lo: self.read(addr),
-                                hi: self.read(addr | 8),
+                                lo: self.read_vram(addr),
+                                hi: self.read_vram(addr | 8),
                                 x,
                                 palette: attr & 3,
                                 behind: attr & 0x20 != 0,
@@ -376,6 +514,7 @@ impl Fast {
                 }
             }
         }
+        assert_eq!(next_write, writes.len(), "a scheduled write was never reached (writes must be in traversal order)");
         out
     }
 }

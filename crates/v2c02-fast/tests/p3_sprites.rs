@@ -7,7 +7,7 @@
 //! fetches from the table and must go red.
 
 use nes_bus::{ACTIVE_DOTS, ACTIVE_ROWS, DOTS_PER_LINE, LINES};
-use v2c02_dots::vram;
+use v2c02_dots::{sprite_program, standard_program, vram};
 use v2c02_fast::{table, Fast, SPR_PT_HI, SPR_PT_LO};
 
 /// The golden holds pixel x at dot x + 3 (see tests/p3.rs).
@@ -68,10 +68,21 @@ fn the_stepper_with_sprites_matches_rung_0_on_every_visible_dot() {
         t.iter_mut().for_each(|e| *e &= !(SPR_PT_LO | SPR_PT_HI));
     }
     let mut f = Fast::with_table(t, vram, g.palette);
-    f.oam = g.oam;
-    f.show_sprites = true;
-    f.t = 0;
-    f.v = 0x2000;
+    // The sprite world as a register program through the register file:
+    // the standard world's, then the sprite world's. The OAM the file
+    // derives from the $2003/$2004 writes must be the OAM the chip holds
+    // (read back beside the golden), byte 2's unimplemented bits masked
+    // as P2 measured; the palette is rendered from what the chip holds
+    // (docs/p3-report.md, the write-path question).
+    f.read(2);
+    f.run_program(&standard_program());
+    for (reg, val, _) in sprite_program() {
+        f.write(reg, val);
+    }
+    let derived: Vec<u8> = f.oam.iter().enumerate().map(|(i, &b)| if i % 4 == 2 { b & 0xe3 } else { b }).collect();
+    assert_eq!(derived, g.oam.to_vec(), "OAM through the register file against the chip's read-back");
+    assert_eq!((f.mask, f.ctrl, f.t, f.fine_x), (0x1e, 0, 0, 0), "the register file after the sprite program");
+    f.palette = g.palette;
     let frame = f.frame();
 
     let mut bad = Vec::new();

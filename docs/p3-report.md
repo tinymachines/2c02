@@ -68,36 +68,45 @@ Read back paced through $2007, the RAM holds `16 2a 12 0f 28 14 02 0f
 the world wrote (`0f 16 2a 12 ...`): every entry one place early, the
 backdrop `0x16` rather than `0x0f`, and $3F0F never written, holding
 its power-on `0x20`. The write path was then measured on its own
-(`examples/p3-write-probe.rs`: a $2006 pair, four known bytes, the row
-read back, for every combination of idle after the pair and idle
-between the writes):
+(`examples/p3-write-probe.rs`: a $2006 pair, four known bytes written
+with a chosen idle between them, the row read back paced), and then
+the reference was put through the same writes
+(`tools/golden-trace/gen-write-probe.js`, 35 minutes, the warm-up
+being the cost):
 
-| idle after the pair | idle between writes | $3F11..$3F14 held (wrote 21 11 01 2a) |
-|---|---|---|
-| 0, 24, 48, 96, 192 | 0 (back to back) | `11 01 2a 3e` |
-| 0, 24, 48, 96, 192 | 24 (an access width) | `31 13 13 3e` |
+| idle between writes | row | rung 0 holds | the reference holds |
+|---|---|---|---|
+| 0 (back to back) | $3F11 | `11 01 2a 3e` | `11 01 2a 2a` |
+| 24 (an access width) | $3F11 | `31 13 13 3e` | `21 11 01 2a` |
+| 96 | $3F11 | `31 13 13 3e` | `21 11 01 2a` |
+| 24 | $3F21 | `21 33 23 2e` | `21 11 01 2a` |
 
-The idle after the pair changes nothing. Back to back, the first value
-is lost and the rest land one entry early, the last of them also
-landing once more, ORed, one entry further. Paced, every entry lands
-as `data OR (v & 0xff)`, the byte ORed with the low byte of the VRAM
-address (`21|11 = 31`, `11|12 = 13`, `01|13 = 13`, `2a|14 = 3e`). One
-mechanism gives both rows: **the $2007 write latches its data in the
-access's release slot, the same edge at which the harness releases the
-CPU data bus.** The chip then samples either the next back-to-back
-access's data (one entry early; the first value never sampled) or a
-floating bus holding the charge of the value just driven OR the
-address phase's charge on the multiplexed AD pins. A real 6502 holds
-write data past that point; the harness, which mirrors the reference's
-`cpucmd.js` statement for statement, does not, and the reference
-script does not either, which is why the P1 node golden agrees with
-it. Separately, the die does delay the $2006 low write into v (the
-node `delayed_write_2006_low`), which is why the standard world's
-first $2007 write also produced a stray CHR-bus write the harness
-captured as `$0000 <- 00`. These are findings about the harness's
-bus realism and P1's world, not about the stepper, which renders from
-the palette as measured; section "Carried to P1" says what they
-change.
+(wrote `21 11 01 2a`; 48 and 192 of idle read as 24 does; holding or
+floating the CPU data bus after each access changes none of rung 0's
+rows; the idle after the $2006 pair changes nothing; the reference's
+standard-world palette is byte for byte rung 0's.)
+
+Back to back, both engines lose the first value and land the rest one
+entry early: that is the model's behaviour and it is what the standard
+world hit. With idle between the writes, **the reference lands every
+byte as written and rung 0 lands `data OR (v & 0xff)`**, the byte ORed
+with the low byte of the VRAM address (`21|11 = 31`, `11|12 = 13`,
+`01|13 = 13`, `2a|14 = 3e`; on the row above $20, `11|22 = 33`, so the
+term is the address, not the palette index). **That is an engine
+divergence**, the family's second after the `spr_d` rail-conflict
+hold, and it was invisible to every node golden because none of them
+paces a palette write: P1's program writes its palette back to back,
+and P2's schedule paces only OAM. The harness is not the cause (the
+hold row above). The address low byte is what the multiplexed AD pins
+carry in the address phase, so the suspect is a node on the internal
+data path holding that phase's charge into the palette write on this
+engine and not on the reference, a group-resolution difference of the
+same family as the hold. It is found the way the hold was, a node
+golden from the reference around one paced palette write and the first
+node that differs, and fixed in halfphi as a rule. Until then the
+register file derives the palette the world wrote, the gates render
+from the palette the chip holds, and no world may rely on a paced
+palette write landing. The stepper is not what is wrong here.
 
 **The pixel pipeline** (`examples/p3-pal-probe.rs`, per half-step):
 `pal_d` precharges to zero through pclk0 and carries the colour through
@@ -147,18 +156,56 @@ order with the behind bit honoured against an opaque background.
 Sprites of 8x16 are not modelled and asserted off; left-edge clipping
 is not modelled and the world does not exercise it.
 
+## Step 3: the register file and scroll
+
+The stepper gained the register file: $2000, $2001, $2003, $2004,
+$2005, $2006 and $2007 as the chip takes them (t, v, fine x and the
+shared write toggle, the OAM address and data, the address increment,
+palette writes and VRAM writes captured the way the harness captures
+them), and $2002, $2004 and $2007 reads. A world is now a register
+program the stepper runs on itself, and a write inside a frame lands
+at its dot.
+
+- **The standard world** through the register file leaves t = 0, v =
+  $2000, fine x = 0, asserted, and step 1's gate holds on it.
+- **The sprite world** through the register file derives an OAM from
+  its $2003/$2004 writes that is byte for byte the OAM read back out
+  of the chip (byte 2's unimplemented bits masked, P2's finding), and
+  step 2's gate holds on it.
+- **The scroll world** (`v2c02_dots::scroll_world`: the background
+  table at $1000, the nametable at $2400, x = $25 and y = $13, so
+  coarse 4 fine 5 by coarse 2 fine 3) with five writes inside the
+  frame, a $2005 horizontal split at line 100 and the full
+  $2006/$2005/$2005/$2006 scroll change at line 160 four dots apart,
+  captured off rung 0 with the accesses performed inside the capture
+  (`examples/p3-scroll-golden.rs`): **every visible dot agrees,
+  61,440 per frame.**
+- **When a mid-frame write lands.** Scanning the dot at which the
+  stepper applies each write, relative to the dot its 24-edge access
+  started on: zero mismatches at 1, 2 and 3 dots, one dot wrong at 0
+  and at 4 to 6, over a hundred at 7 and 8. A plateau exactly one
+  access wide: the effect lands inside the access and the picture
+  cannot say which dot. The centre is pinned and the plateau is
+  asserted as measured, re-derived on every run.
+- `MUTATE=1` drops the horizontal copy from the table and 35,387 dots
+  go wrong.
+
+The palette is the one register-file output not held to the chip: the
+file derives the palette the world wrote, the chip holds what its
+write path landed, and the gates render from the read-back while the
+write-path question below is open.
+
 ## Carried to P1, recorded here and not changed
 
 - The P1 report describes "the 16-entry palette" as if the chip held
-  what was written. It holds the shifted palette above, for the reason
-  the write probe measured. The P1 dot golden and the DAC gate stand as
-  measurements of what the chip did (the DAC gate compared level legs
-  against the colour on the bus, whichever it was); the description is
-  what is wrong. The honest fix is in the harness's bus realism: hold
-  the CPU data bus through the release edge the way a 6502 does, in the
-  Rust harness AND in the reference's generator script together, then
-  regenerate the P1 goldens. Until then any world that loads the
-  palette should read it back, as P3's do. A director's call.
+  what was written. It holds the shifted palette above, the model's
+  back-to-back behaviour on both engines. The P1 dot golden and the DAC
+  gate stand as measurements of what the chip did (the DAC gate
+  compared level legs against the colour on the bus, whichever it was);
+  the description is what is wrong. A world that wants its palette to
+  land writes it with idle between the entries, which on rung 0 waits
+  for the divergence above to be fixed. A director's call whether P1's
+  world is re-recorded then.
 - P1's capture places pixel x at dot x + 4 while the contract's active
   window starts at dot 1. Where the picture sits relative to sync is a
   geometry question for the console and the real capture (N5, M4);

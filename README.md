@@ -11,10 +11,10 @@ starts at `docs/p0-report.md`.
 
 ## Status
 
-P3 steps 1 and 2 (the ladder's per-dot stepper, background then
-sprites) are closed (`docs/p3-plan.md`, `docs/p3-report.md`):
-`v2c02-fast` renders the standard world from a sequencer table
-measured out of rung 0 at build time (one event word per dot: the fetches classified by the address
+P3 steps 1 to 3 (the ladder's per-dot stepper: background, sprites,
+then the register file and scroll) are closed (`docs/p3-plan.md`,
+`docs/p3-report.md`): `v2c02-fast` renders the standard world from a
+sequencer table measured out of rung 0 at build time (one event word per dot: the fetches classified by the address
 the chip latched, the increments, the copies, the flag events) and a
 palette RAM read back out of the chip, with the datapath authored and
 labelled. It agrees with rung 0's dot golden on **every visible dot,
@@ -24,15 +24,19 @@ second** (worst 1.781 ms), so the plan's bit-sliced datapath is not
 built. With sprites on, against a second golden whose palette RAM and
 OAM are read back out of the chip, **every visible dot agrees again**,
 sprite 0's hit lands where the chip's `spr0_hit` rose and the overflow
-where `spr_overflow` did. Getting there produced a finding about the
-harness's bus realism: a $2007 write latches in the access's release
-slot, the edge the harness releases the CPU data bus on, so a
-back-to-back write lands the next value one entry early and a paced
-write lands the byte ORed with the address low byte; the palette P1's
-world holds is every entry one place early with `0x16` as the
-backdrop, and the report says what to do about it. `MUTATE=1` drops
-the coarse X increment (step 1) or the sprite fetches (step 2) and
-goes red.
+where `spr_overflow` did. With the register file, every world is a
+register program the stepper runs on itself (t, v, fine x, $2000,
+$2001, the OAM through $2003/$2004, held to the chip's read-back), and
+a scrolled world with a horizontal split and a full $2006/$2005/$2005/
+$2006 scroll change mid-frame **agrees on every visible dot again**,
+the writes landing inside their access (a measured three-dot plateau).
+Getting there produced the family's second proven engine divergence:
+a $2007 palette write with idle after it lands the byte ORed with the
+low byte of the VRAM address on rung 0 and as written on the
+reference, invisible to every node golden because none paces a
+palette write; open, and the report says how it will be found. `MUTATE=1` drops the coarse X increment
+(step 1), the sprite fetches (step 2) or the horizontal copy (step 3)
+and goes red.
 
 P2 (the PPU's contested corners) is closed (`docs/p2-report.md`): one
 schedule drives sprite-0, the VBL read race and OAM corruption along a
@@ -136,6 +140,18 @@ cargo run --release -p v2c02-dots --example p3-sprites-golden
                                      # record the sprite golden off rung 0
                                      # (palette and OAM read back, flags,
                                      # dots; about a minute)
+REQUIRE_GOLDEN_P3=1 cargo test --release -p v2c02-fast --test p3_scroll
+                                     # P3 step 3: the register file and scroll,
+                                     # five mid-frame writes at their dots,
+                                     # every visible dot; the write-delay
+                                     # plateau re-derived each run. MUTATE=1
+                                     # drops the horizontal copy.
+cargo run --release -p v2c02-dots --example p3-scroll-golden
+                                     # record the scroll golden off rung 0
+                                     # with the writes inside the frame
+node tools/golden-trace/gen-write-probe.js
+                                     # the reference's answer to the palette
+                                     # write-path question (about 35 min)
 cargo run --release -p v2c02-dots --example p3-write-probe
                                      # the $2007 write path: what lands, by
                                      # idle after the pair and between writes

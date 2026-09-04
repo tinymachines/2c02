@@ -28,6 +28,16 @@ pub struct Harness {
     /// `PpuPins::mutated_rd_for_proof`, which must send the P1 golden
     /// red. Setting this anywhere but a mutation proof is a bug by name.
     pub mutate_rd_for_proof: bool,
+    /// Float the CPU data bus at the end of every access (true, the
+    /// default), which is what the reference's cpucmd.js does when the
+    /// next command is an idle and what every golden's generator does.
+    /// False holds a write's data until the next access starts. An
+    /// instrument, kept because of what it measured: the palette
+    /// write-path divergence (docs/p3-report.md) was first suspected of
+    /// being this bus timing, and holding the data changes none of its
+    /// rows, which is how the cause was moved from the harness to the
+    /// engine.
+    pub float_after_access: bool,
     chr_ale: bool,
     chr_rd: bool,
     chr_wr: bool,
@@ -55,6 +65,7 @@ impl Harness {
             wr: n("wr"),
             ext_out_n: std::array::from_fn(|i| arr("/ext_out", i)),
             mutate_rd_for_proof: false,
+            float_after_access: true,
             chr_ale: ppu.engine.is_high(n("ale")),
             chr_rd: ppu.engine.is_high(n("rd")),
             chr_wr: ppu.engine.is_high(n("wr")),
@@ -201,10 +212,12 @@ impl Harness {
         sampled
     }
 
-    /// The reference floats the data bus when the next command starts;
-    /// the harness does it at the end of each access.
+    /// The end of an access: the data bus floats unless
+    /// `float_after_access` is off (see its note).
     pub fn end_access(&mut self) {
-        self.float_bits(&self.io_db.clone());
+        if self.float_after_access {
+            self.float_bits(&self.io_db.clone());
+        }
     }
 
     /// One CPU access, the reference's 24-edge protocol. `reg` is the

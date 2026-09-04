@@ -42,16 +42,20 @@ pub fn standard_world() -> Harness {
     let mut h = Harness::new(Ppu::power_on(), vram);
     h.wait(712_100);
     h.read(2);
-    for (reg, val) in [(0u8, 0x00u8), (1, 0x00), (6, 0x3f), (6, 0x00)] {
-        h.write(reg, val);
-    }
-    for v in PALETTE {
-        h.write(7, v);
-    }
-    for (reg, val) in [(6u8, 0x20u8), (6, 0x00), (5, 0x00), (5, 0x00), (1, 0x0a)] {
+    for (reg, val) in standard_program() {
         h.write(reg, val);
     }
     h
+}
+
+/// The standard world's register program after its $2002 read, in
+/// order, back to back: the one sequence `standard_world` runs on the
+/// chip and the stepper's register file runs on itself.
+pub fn standard_program() -> Vec<(u8, u8)> {
+    let mut p = vec![(0u8, 0x00u8), (1, 0x00), (6, 0x3f), (6, 0x00)];
+    p.extend(PALETTE.iter().map(|&v| (7, v)));
+    p.extend([(6, 0x20), (6, 0x00), (5, 0x00), (5, 0x00), (1, 0x0a)]);
+    p
 }
 
 /// The three colours of each sprite palette the sprite world writes to
@@ -95,35 +99,142 @@ pub fn sprite_oam() -> [u8; 256] {
 /// (mask $1E).
 pub fn sprite_world() -> Harness {
     let mut h = standard_world();
+    for (reg, val, idle) in sprite_program() {
+        h.write(reg, val);
+        h.wait(idle);
+    }
+    h
+}
+
+/// The sprite world's register program after the standard world's, as
+/// (register, value, half-steps of idle after the access): the idle is
+/// the harness's pacing (P2's finding for OAM writes; a $2006 pair
+/// waited out; each palette triple written back to back, since on rung
+/// 0 a paced $2007 palette write lands the byte ORed with the address
+/// low byte, the open engine divergence of docs/p3-report.md, and a
+/// back-to-back one does not). The register file ignores the idle; the
+/// read-back beside the golden records what the chip held either way.
+pub fn sprite_program() -> Vec<(u8, u8, u64)> {
+    let mut p = vec![(1u8, 0x00u8, 24u64)];
+    for (i, cols) in SPRITE_PALETTE.iter().enumerate() {
+        p.push((6, 0x3f, 24));
+        p.push((6, 0x11 + 4 * i as u8, 48));
+        p.push((7, cols[0], 0));
+        p.push((7, cols[1], 0));
+        p.push((7, cols[2], 24));
+    }
+    p.push((3, 0x00, 24));
+    p.extend(sprite_oam().iter().map(|&b| (4, b, 24)));
+    p.extend([(6, 0x20, 48), (6, 0x00, 48), (5, 0x00, 48), (5, 0x00, 48), (1, 0x1e, 0)]);
+    p
+}
+
+/// A register write scheduled inside a captured frame: the access
+/// starts on the first half-step of dot (vpos, hpos).
+#[derive(Clone, Copy, Debug)]
+pub struct TimedWrite {
+    pub vpos: u16,
+    pub hpos: u16,
+    pub reg: u8,
+    pub val: u8,
+}
+
+/// The register program of the scroll world, before the frame: the
+/// standard world's, then the background table at $1000 and the
+/// nametable at $2400 ($2000 = $11), a scroll of x = $25 (coarse 4,
+/// fine 5) and y = $13 (coarse 2, fine 3), background on with the
+/// left column shown ($2001 = $0A).
+pub const SCROLL_PROGRAM: [(u8, u8); 4] = [(0, 0x11), (5, 0x25), (5, 0x13), (1, 0x0a)];
+
+/// The mid-frame writes of the scroll world, the classic two: a
+/// horizontal split at line 100 (one $2005 write changes fine x at once
+/// and coarse x at the next horizontal copy), and a full scroll change
+/// at line 160 by the $2006/$2005/$2005/$2006 sequence, each access
+/// four dots after the last.
+pub const SCROLL_WRITES: [TimedWrite; 5] = [
+    TimedWrite { vpos: 100, hpos: 10, reg: 5, val: 0x80 },
+    TimedWrite { vpos: 160, hpos: 10, reg: 6, val: 0x08 },
+    TimedWrite { vpos: 160, hpos: 14, reg: 5, val: 0x40 },
+    TimedWrite { vpos: 160, hpos: 18, reg: 5, val: 0x10 },
+    TimedWrite { vpos: 160, hpos: 22, reg: 6, val: 0xa2 },
+];
+
+/// The scroll world: the standard world with rendering paused, its
+/// register program applied with the $2006 pair's idle, and rendering
+/// resumed scrolled. The mid-frame writes are the capture's business.
+pub fn scroll_world() -> Harness {
+    let mut h = standard_world();
     h.write(1, 0x00);
-    h.wait(24);
-    // The $2006 pair is waited out (the delayed low write), then each
-    // triple is written back to back. Measured (docs/p3-report.md): a
-    // $2007 palette write with an access-width of idle after it lands as
-    // data OR the low byte of v, while back-to-back writes land as
-    // written; the read-back beside the golden records what held.
-    for (p, cols) in SPRITE_PALETTE.iter().enumerate() {
-        h.write(6, 0x3f);
-        h.wait(24);
-        h.write(6, 0x11 + 4 * p as u8);
-        h.wait(48);
-        for &c in cols {
-            h.write(7, c);
-        }
-        h.wait(24);
-    }
-    h.write(3, 0x00);
-    h.wait(24);
-    for &b in sprite_oam().iter() {
-        h.write(4, b);
-        h.wait(24);
-    }
-    for (reg, val) in [(6u8, 0x20u8), (6, 0x00), (5, 0x00), (5, 0x00)] {
+    h.wait(48);
+    for (reg, val) in SCROLL_PROGRAM {
         h.write(reg, val);
         h.wait(48);
     }
-    h.write(1, 0x1e);
     h
+}
+
+/// `capture` with register writes performed inside the frame at their
+/// scheduled dots, the 24-edge access interleaved with the sampling so
+/// no half-step goes unseen. Returns the capture and, for each write,
+/// the half-step at which its access started.
+pub fn capture_with_writes(h: &mut Harness, rows: usize, writes: &[TimedWrite]) -> (Captured, Vec<u64>) {
+    let taps = Taps::new(h);
+    while !(taps.bus(h, &taps.vpos) == 261 && taps.bus(h, &taps.hpos) == 340) {
+        h.half_step();
+    }
+    let nl = h.ppu.engine.netlist().clone();
+    let hit_node = nl.node("spr0_hit").expect("node spr0_hit");
+    let ovf_node = nl.node("spr_overflow").expect("node spr_overflow");
+    let mut dots = DotFrame::filled(FrameParity::Even, 0x0f, 0);
+    let mut trace = Vec::new();
+    let mut seen_pclk1 = false;
+    let mut spr0_hit = None;
+    let mut spr_overflow = None;
+    let (mut was_hit, mut was_ovf) = (h.ppu.engine.is_high(hit_node), h.ppu.engine.is_high(ovf_node));
+    let mut next = 0usize;
+    let mut started = Vec::new();
+    // An access in flight: (reg, val, edges left).
+    let mut access: Option<(u8, u8, u32)> = None;
+    loop {
+        if let Some((reg, val, counter)) = access {
+            h.access_edge(false, reg, val, counter);
+            access = if counter > 1 { Some((reg, val, counter - 1)) } else { None };
+            if access.is_none() {
+                h.end_access();
+            }
+        }
+        h.half_step();
+        let hp = taps.bus(h, &taps.hpos) as u16;
+        let vp = taps.bus(h, &taps.vpos) as u16;
+        if vp as usize >= rows && vp != 261 {
+            break;
+        }
+        if access.is_none() && next < writes.len() && (vp, hp) == (writes[next].vpos, writes[next].hpos) {
+            access = Some((writes[next].reg, writes[next].val, 24));
+            started.push(h.half_steps);
+            next += 1;
+        }
+        let (hit, ovf) = (h.ppu.engine.is_high(hit_node), h.ppu.engine.is_high(ovf_node));
+        if hit && !was_hit && spr0_hit.is_none() {
+            spr0_hit = Some((vp, hp));
+        }
+        if ovf && !was_ovf && spr_overflow.is_none() {
+            spr_overflow = Some((vp, hp));
+        }
+        was_hit = hit;
+        was_ovf = ovf;
+        trace.push((hp, vp, taps.leg_mask(h), h.ppu.engine.is_high(taps.emph)));
+        let p1 = h.ppu.engine.is_high(taps.pclk1);
+        if p1 && seen_pclk1 && (vp as usize) < ACTIVE_ROWS && (hp as usize) < DOTS_PER_LINE - 1 {
+            let colour = taps.bus(h, &taps.pal_d) as u8;
+            dots.set(vp as usize, hp as usize + 1, colour, 0);
+            seen_pclk1 = false;
+        } else {
+            seen_pclk1 = p1;
+        }
+    }
+    assert_eq!(next, writes.len(), "not every scheduled write started");
+    (Captured { dots, trace, spr0_hit, spr_overflow }, started)
 }
 
 /// Read the palette RAM (32) and OAM (256) back out of the chip in
