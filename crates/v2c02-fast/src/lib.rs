@@ -147,10 +147,32 @@ pub struct Fast {
     fetched: usize,
     units: [Unit; 8],
     pub vbl: bool,
+    /// A $2002 read landed inside the race window before the set: the
+    /// set dot must not raise the flag (`race`).
+    vbl_suppressed: bool,
     /// The first sprite-0 hit of the frame, as (line, pixel), and the
     /// evaluation overflow (a ninth sprite in range on some line).
     pub spr0_hit: Option<(usize, usize)>,
     pub spr_overflow: bool,
+}
+
+/// The $2002 read race, from the P2 measurement on rung 0
+/// (`docs/p2-report.md`, "The VBL read race"): a read whose access starts
+/// 24 or more PPU half-steps before `set_vbl_flag` rises misses the flag
+/// and the flag sets after it; one starting 18 or 12 before returns 0
+/// AND the flag never sets (the missed-vblank window, about a dot and a
+/// half wide); one starting 6 before or later returns 1 and consumes it.
+/// The offsets P2 could schedule were multiples of six; the two
+/// boundaries below sit between the measured columns and are labelled
+/// fitted, to be moved only by a measurement (blargg's 02-vbl_set_time
+/// walks the window one dot at a time; the console's gate 1 reads it).
+pub mod race {
+    /// Reads starting later than this many half-steps before the set
+    /// consume the flag (return 1, clear it).
+    pub const CONSUME_FROM: i32 = -9;
+    /// Reads starting later than this, and not consuming, suppress the
+    /// set; earlier reads miss it.
+    pub const SUPPRESS_FROM: i32 = -21;
 }
 
 impl Fast {
@@ -215,6 +237,7 @@ impl Fast {
             fetched: 0,
             units: [Unit::default(); 8],
             vbl: false,
+            vbl_suppressed: false,
             spr0_hit: None,
             spr_overflow: false,
         }
@@ -278,6 +301,50 @@ impl Fast {
 
     pub fn position(&self) -> Position {
         self.pos
+    }
+
+    /// A CPU read of $2002 whose access begins `half_steps_into_dot`
+    /// PPU half-steps (0..8) after the start of the dot the stepper last
+    /// stepped: the race is decided from where that start falls against
+    /// `set_vbl_flag`'s dot, (241, 1). Any other register reads as
+    /// `read`.
+    pub fn read_timed(&mut self, reg: u8, half_steps_into_dot: u8) -> u8 {
+        if reg & 7 != 2 {
+            return self.read(reg);
+        }
+        let set = Position { line: ACTIVE_ROWS + 1, dot: 1 };
+        // Dots from the last-stepped dot to the set dot, in traversal
+        // order; only a handful ahead matters.
+        let cur = self.pos;
+        let ahead = |from: Position, to: Position| -> Option<i32> {
+            // Distance in dots from `from` (the next dot to step) to `to`,
+            // when `to` is within the next few dots of the same or next
+            // line; None otherwise.
+            let mut p = from;
+            for d in 0..4 {
+                if p == to {
+                    return Some(d);
+                }
+                p = if p.dot + 1 < DOTS_PER_LINE { Position { line: p.line, dot: p.dot + 1 } } else { Position { line: (p.line + 1) % LINES, dot: 0 } };
+            }
+            None
+        };
+        if let Some(dots) = ahead(cur, set) {
+            // The set dot is `dots` steps ahead of the next dot to step;
+            // the last-stepped dot began (dots + 1) dots before it.
+            let offset = half_steps_into_dot as i32 - 8 * (dots as i32 + 1);
+            if offset > race::CONSUME_FROM {
+                self.vbl_suppressed = true;
+                self.w = false;
+                return 0x80 | ((self.spr0_hit.is_some() as u8) << 6) | ((self.spr_overflow as u8) << 5);
+            }
+            if offset > race::SUPPRESS_FROM {
+                self.vbl_suppressed = true;
+                self.w = false;
+                return ((self.spr0_hit.is_some() as u8) << 6) | ((self.spr_overflow as u8) << 5);
+            }
+        }
+        self.read(reg)
     }
 
     /// A CPU read of $2000 + reg.
@@ -484,6 +551,7 @@ impl Fast {
             self.evaluated = false;
         }
         let show_sprites = self.mask & 0x10 != 0;
+        let show_bg = self.mask & 0x08 != 0;
         let base = vp * DOTS_PER_LINE;
         // With both of $2001's rendering bits clear the chip fetches
         // nothing and never touches v: the increments and copies below
@@ -498,7 +566,9 @@ impl Fast {
         let render_line = rendering && (vp < ACTIVE_ROWS || vp == LINES - 1);
         let e = if rendering { self.table[base + hp] } else { self.table[base + hp] & (SET_VBL | CLR_FLAGS) };
         if render_line && self.active[base + hp] {
-            let mut index = self.bg_pixel();
+            // With the background off (sprites on) the pipeline still runs
+            // and the background contributes nothing: no pixel, no hit.
+            let mut index = if show_bg { self.bg_pixel() } else { 0 };
             if show_sprites && vp < ACTIVE_ROWS && (1..=ACTIVE_DOTS).contains(&hp) {
                 let x = hp - 1;
                 if let Some((s, behind, is_zero)) = self.spr_pixel(x) {
@@ -595,7 +665,11 @@ impl Fast {
             self.v = (self.v & !0x7be0) | (self.t & 0x7be0);
         }
         if e & SET_VBL != 0 {
-            self.vbl = true;
+            if self.vbl_suppressed {
+                self.vbl_suppressed = false;
+            } else {
+                self.vbl = true;
+            }
         }
         if e & CLR_FLAGS != 0 {
             self.vbl = false;
