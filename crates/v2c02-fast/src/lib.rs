@@ -75,12 +75,45 @@ struct Unit {
 /// fine x, w) because that model is what P1 and P2 proved this chip
 /// implements; the POSITIONS at which anything happens come only from
 /// the table.
+/// The PPU's address space outside its own palette RAM: the cartridge's
+/// CHR and the console's CIRAM, as the console wires them. The worlds
+/// the gates run are pure functions of the address (`FnVram`); a console
+/// is not, and its $2007 writes land.
+pub trait VramBus {
+    fn read(&mut self, a: u16) -> u8;
+    fn write(&mut self, a: u16, v: u8);
+}
+
+/// A world as a pure function: reads answer, writes are dropped here and
+/// captured in `Fast::vram_writes`, as the gates expect.
+pub struct FnVram(pub fn(u16) -> u8);
+
+impl VramBus for FnVram {
+    fn read(&mut self, a: u16) -> u8 {
+        (self.0)(a)
+    }
+    fn write(&mut self, _a: u16, _v: u8) {}
+}
+
+/// Where the dot stepper stands: the line and dot it will step next, in
+/// traversal order (the pre-render line 261 first, then 0..260).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Position {
+    pub line: usize,
+    pub dot: usize,
+}
+
 pub struct Fast {
     table: Vec<u16>,
     /// Per dot: the background shifters present a pixel and advance.
     /// Derived from the table: the eight dots ending at each INC_X.
     active: Vec<bool>,
-    vram: fn(u16) -> u8,
+    vram: Box<dyn VramBus>,
+    /// The dot stepper's cursor and the frame it is filling.
+    pos: Position,
+    line_buf: [u8; DOTS_PER_LINE],
+    evaluated: bool,
+    out: DotFrame,
     /// The 32-byte palette RAM.
     pub palette: [u8; 32],
     /// The 256-byte OAM.
@@ -127,9 +160,18 @@ impl Fast {
         Fast::with_table(table(), vram, palette_as_loaded())
     }
 
+    /// The same on a console's bus (CHR and CIRAM that take writes).
+    pub fn on_bus(vram: Box<dyn VramBus>) -> Fast {
+        Fast::with_table_on_bus(table(), vram, palette_as_loaded())
+    }
+
     /// The same with a caller-supplied table and palette: the mutation
     /// proofs drop events from a copy and must go red.
     pub fn with_table(table: Vec<u16>, vram: fn(u16) -> u8, palette: [u8; 32]) -> Fast {
+        Fast::with_table_on_bus(table, Box::new(FnVram(vram)), palette)
+    }
+
+    pub fn with_table_on_bus(table: Vec<u16>, vram: Box<dyn VramBus>, palette: [u8; 32]) -> Fast {
         assert_eq!(table.len(), LINES * DOTS_PER_LINE);
         // The shifters run on the eight dots that end at each INC_X: the
         // tile's four fetches and their reads. Measured positions, not a
@@ -145,6 +187,10 @@ impl Fast {
             table,
             active,
             vram,
+            pos: Position { line: LINES - 1, dot: 0 },
+            line_buf: [0; DOTS_PER_LINE],
+            evaluated: false,
+            out: DotFrame::filled(FrameParity::Even, 0x0f, 0),
             palette,
             oam: [0xff; 256],
             ctrl: 0,
@@ -216,11 +262,22 @@ impl Fast {
                     self.palette[Self::palette_index(a)] = val & 0x3f;
                 } else {
                     self.vram_writes.push((a, val));
+                    self.vram.write(a, val);
                 }
                 self.v = self.v.wrapping_add(self.increment()) & 0x7fff;
             }
             _ => {}
         }
+    }
+
+    /// /INT as the chip drives it: the flag and $2000's enable together.
+    /// The line's level is `!nmi_asserted()`.
+    pub fn nmi_asserted(&self) -> bool {
+        self.vbl && self.ctrl & 0x80 != 0
+    }
+
+    pub fn position(&self) -> Position {
+        self.pos
     }
 
     /// A CPU read of $2000 + reg.
@@ -280,8 +337,8 @@ impl Fast {
     }
 
     #[inline]
-    fn read_vram(&self, addr: u16) -> u8 {
-        (self.vram)(addr & 0x3fff)
+    fn read_vram(&mut self, addr: u16) -> u8 {
+        self.vram.read(addr & 0x3fff)
     }
 
     #[inline]
@@ -386,136 +443,166 @@ impl Fast {
     /// (pixel x reaches `pal_d` three dots later) is the golden's
     /// convention and lives in the gates that compare against it, not
     /// here. `writes` must be in traversal order (the pre-render line
-    /// first, then lines 0..).
+    /// first, then lines 0..). The stepper must stand at the start of a
+    /// frame (line 261, dot 0), where a fresh one does.
     pub fn frame_with_writes(&mut self, writes: &[DotWrite]) -> DotFrame {
-        assert!(self.ctrl & 0x20 == 0, "8x16 sprites are not modelled");
-        let show_sprites = self.mask & 0x10 != 0;
-        let backdrop = self.colour(0);
-        let mut out = DotFrame::filled(FrameParity::Even, backdrop, 0);
-        let mut line = [0u8; DOTS_PER_LINE];
-        self.spr0_hit = None;
-        self.spr_overflow = false;
+        assert_eq!(self.pos, Position { line: LINES - 1, dot: 0 }, "frame_with_writes needs the stepper at a frame's start");
         let mut next_write = 0usize;
-        // The picture's frame begins at the pre-render line: its vertical
-        // copy sets v for row 0 and its dots 321..336 prefetch row 0's
-        // first two tiles, so the stepper runs line 261 first, then 0
-        // through 260. The table is in frame order; only the traversal
-        // starts a line early.
-        let order = std::iter::once(LINES - 1).chain(0..LINES - 1);
-        for vp in order {
-            let base = vp * DOTS_PER_LINE;
-            let render_line = vp < ACTIVE_ROWS || vp == LINES - 1;
+        loop {
+            let Position { line: vp, dot: hp } = self.pos;
+            while next_write < writes.len() && writes[next_write].vpos == vp && writes[next_write].hpos == hp {
+                let w = writes[next_write];
+                self.write(w.reg, w.val);
+                next_write += 1;
+            }
+            if let Some(frame) = self.step_dot() {
+                assert_eq!(next_write, writes.len(), "a scheduled write was never reached (writes must be in traversal order)");
+                return frame;
+            }
+        }
+    }
+
+    /// One dot of the frame, in traversal order: the pre-render line 261
+    /// first, then 0 through 260; the completed picture comes back on
+    /// the last dot of line 260, and the cursor returns to (261, 0). A
+    /// console interleaves this with its CPU, one dot every eight master
+    /// half-steps; the frame functions above are this in a loop.
+    pub fn step_dot(&mut self) -> Option<DotFrame> {
+        let Position { line: vp, dot: hp } = self.pos;
+        if vp == LINES - 1 && hp == 0 {
+            // The picture's frame begins at the pre-render line: its
+            // vertical copy sets v for row 0 and its dots 321..336
+            // prefetch row 0's first two tiles.
+            assert!(self.ctrl & 0x20 == 0, "8x16 sprites are not modelled");
+            let backdrop = self.colour(0);
+            self.out = DotFrame::filled(FrameParity::Even, backdrop, 0);
+            self.spr0_hit = None;
+            self.spr_overflow = false;
+        }
+        if hp == 0 {
             self.fetched = 0;
-            let mut evaluated = false;
-            for (hp, slot) in line.iter_mut().enumerate() {
-                while next_write < writes.len() && writes[next_write].vpos == vp && writes[next_write].hpos == hp {
-                    let w = writes[next_write];
-                    self.write(w.reg, w.val);
-                    next_write += 1;
-                }
-                let e = self.table[base + hp];
-                if render_line && self.active[base + hp] {
-                    let mut index = self.bg_pixel();
-                    if show_sprites && vp < ACTIVE_ROWS && (1..=ACTIVE_DOTS).contains(&hp) {
-                        let x = hp - 1;
-                        if let Some((s, behind, is_zero)) = self.spr_pixel(x) {
-                            let bg_opaque = index & 3 != 0;
-                            if is_zero && bg_opaque && x != 255 && self.spr0_hit.is_none() {
-                                self.spr0_hit = Some((vp, x));
-                            }
-                            if !(behind && bg_opaque) {
-                                index = s;
-                            }
-                        }
+            self.evaluated = false;
+        }
+        let show_sprites = self.mask & 0x10 != 0;
+        let base = vp * DOTS_PER_LINE;
+        let render_line = vp < ACTIVE_ROWS || vp == LINES - 1;
+        let e = self.table[base + hp];
+        if render_line && self.active[base + hp] {
+            let mut index = self.bg_pixel();
+            if show_sprites && vp < ACTIVE_ROWS && (1..=ACTIVE_DOTS).contains(&hp) {
+                let x = hp - 1;
+                if let Some((s, behind, is_zero)) = self.spr_pixel(x) {
+                    let bg_opaque = index & 3 != 0;
+                    if is_zero && bg_opaque && x != 255 && self.spr0_hit.is_none() {
+                        self.spr0_hit = Some((vp, x));
                     }
-                    *slot = index;
-                    self.shift_lo <<= 1;
-                    self.shift_hi <<= 1;
-                    self.attr_lo <<= 1;
-                    self.attr_hi <<= 1;
-                }
-                if e & FETCH_NT != 0 {
-                    self.nt = self.read_vram(0x2000 | (self.v & 0x0fff));
-                }
-                if e & FETCH_AT != 0 {
-                    let a = 0x23c0 | (self.v & 0x0c00) | ((self.v >> 4) & 0x38) | ((self.v >> 2) & 0x07);
-                    let byte = self.read_vram(a);
-                    let shift = ((self.v >> 4) & 4) | (self.v & 2);
-                    self.at = (byte >> shift) & 3;
-                }
-                if e & (FETCH_PT_LO | FETCH_PT_HI) != 0 {
-                    let bg_hi = (self.ctrl & 0x10 != 0) as u16;
-                    let base_addr = (bg_hi << 12) | ((self.nt as u16) << 4) | ((self.v >> 12) & 7);
-                    if e & FETCH_PT_LO != 0 {
-                        self.pt_lo = self.read_vram(base_addr);
+                    if !(behind && bg_opaque) {
+                        index = s;
                     }
-                    if e & FETCH_PT_HI != 0 {
-                        self.pt_hi = self.read_vram(base_addr | 8);
-                    }
-                }
-                if render_line && e & (SPR_GARBAGE | SPR_PT_LO | SPR_PT_HI) != 0 {
-                    if !evaluated {
-                        self.evaluate(vp);
-                        evaluated = true;
-                        self.units = [Unit::default(); 8];
-                    }
-                    if e & SPR_PT_LO != 0 && self.fetched < 8 {
-                        let k = self.fetched;
-                        self.fetched += 1;
-                        if k < self.sec_n {
-                            let (y, tile, attr, x, is_zero) = self.sec[k];
-                            let mut row = (vp - y as usize) as u16 & 7;
-                            if attr & 0x80 != 0 {
-                                row = 7 - row;
-                            }
-                            let spr_hi = (self.ctrl & 0x08 != 0) as u16;
-                            let addr = (spr_hi << 12) | ((tile as u16) << 4) | row;
-                            self.units[k] = Unit {
-                                lo: self.read_vram(addr),
-                                hi: self.read_vram(addr | 8),
-                                x,
-                                palette: attr & 3,
-                                behind: attr & 0x20 != 0,
-                                hflip: attr & 0x40 != 0,
-                                is_zero,
-                                active: true,
-                            };
-                        }
-                    }
-                }
-                if e & INC_X != 0 {
-                    self.inc_x();
-                    // The tile just fetched enters the low byte of the
-                    // shifters as its increment lands; eight shifts later
-                    // it is the byte being presented.
-                    self.shift_lo = (self.shift_lo & 0xff00) | self.pt_lo as u16;
-                    self.shift_hi = (self.shift_hi & 0xff00) | self.pt_hi as u16;
-                    self.attr_lo = (self.attr_lo & 0xff00) | if self.at & 1 != 0 { 0xff } else { 0 };
-                    self.attr_hi = (self.attr_hi & 0xff00) | if self.at & 2 != 0 { 0xff } else { 0 };
-                }
-                if e & INC_Y != 0 {
-                    self.inc_y();
-                }
-                if e & COPY_X != 0 {
-                    self.v = (self.v & !0x041f) | (self.t & 0x041f);
-                }
-                if e & COPY_Y != 0 {
-                    self.v = (self.v & !0x7be0) | (self.t & 0x7be0);
-                }
-                if e & SET_VBL != 0 {
-                    self.vbl = true;
-                }
-                if e & CLR_FLAGS != 0 {
-                    self.vbl = false;
                 }
             }
-            if vp < ACTIVE_ROWS {
-                for (d, &index) in line.iter().enumerate().skip(1).take(ACTIVE_DOTS) {
-                    out.set(vp, d, self.colour(index), 0);
+            self.line_buf[hp] = index;
+            self.shift_lo <<= 1;
+            self.shift_hi <<= 1;
+            self.attr_lo <<= 1;
+            self.attr_hi <<= 1;
+        }
+        if e & FETCH_NT != 0 {
+            self.nt = self.read_vram(0x2000 | (self.v & 0x0fff));
+        }
+        if e & FETCH_AT != 0 {
+            let a = 0x23c0 | (self.v & 0x0c00) | ((self.v >> 4) & 0x38) | ((self.v >> 2) & 0x07);
+            let byte = self.read_vram(a);
+            let shift = ((self.v >> 4) & 4) | (self.v & 2);
+            self.at = (byte >> shift) & 3;
+        }
+        if e & (FETCH_PT_LO | FETCH_PT_HI) != 0 {
+            let bg_hi = (self.ctrl & 0x10 != 0) as u16;
+            let base_addr = (bg_hi << 12) | ((self.nt as u16) << 4) | ((self.v >> 12) & 7);
+            if e & FETCH_PT_LO != 0 {
+                self.pt_lo = self.read_vram(base_addr);
+            }
+            if e & FETCH_PT_HI != 0 {
+                self.pt_hi = self.read_vram(base_addr | 8);
+            }
+        }
+        if render_line && e & (SPR_GARBAGE | SPR_PT_LO | SPR_PT_HI) != 0 {
+            if !self.evaluated {
+                self.evaluate(vp);
+                self.evaluated = true;
+                self.units = [Unit::default(); 8];
+            }
+            if e & SPR_PT_LO != 0 && self.fetched < 8 {
+                let k = self.fetched;
+                self.fetched += 1;
+                if k < self.sec_n {
+                    let (y, tile, attr, x, is_zero) = self.sec[k];
+                    let mut row = (vp - y as usize) as u16 & 7;
+                    if attr & 0x80 != 0 {
+                        row = 7 - row;
+                    }
+                    let spr_hi = (self.ctrl & 0x08 != 0) as u16;
+                    let addr = (spr_hi << 12) | ((tile as u16) << 4) | row;
+                    self.units[k] = Unit {
+                        lo: self.read_vram(addr),
+                        hi: self.read_vram(addr | 8),
+                        x,
+                        palette: attr & 3,
+                        behind: attr & 0x20 != 0,
+                        hflip: attr & 0x40 != 0,
+                        is_zero,
+                        active: true,
+                    };
                 }
             }
         }
-        assert_eq!(next_write, writes.len(), "a scheduled write was never reached (writes must be in traversal order)");
-        out
+        if e & INC_X != 0 {
+            self.inc_x();
+            // The tile just fetched enters the low byte of the shifters
+            // as its increment lands; eight shifts later it is the byte
+            // being presented.
+            self.shift_lo = (self.shift_lo & 0xff00) | self.pt_lo as u16;
+            self.shift_hi = (self.shift_hi & 0xff00) | self.pt_hi as u16;
+            self.attr_lo = (self.attr_lo & 0xff00) | if self.at & 1 != 0 { 0xff } else { 0 };
+            self.attr_hi = (self.attr_hi & 0xff00) | if self.at & 2 != 0 { 0xff } else { 0 };
+        }
+        if e & INC_Y != 0 {
+            self.inc_y();
+        }
+        if e & COPY_X != 0 {
+            self.v = (self.v & !0x041f) | (self.t & 0x041f);
+        }
+        if e & COPY_Y != 0 {
+            self.v = (self.v & !0x7be0) | (self.t & 0x7be0);
+        }
+        if e & SET_VBL != 0 {
+            self.vbl = true;
+        }
+        if e & CLR_FLAGS != 0 {
+            self.vbl = false;
+        }
+        // Advance the cursor; a finished visible line lands in the frame,
+        // and line 260's last dot completes it.
+        if hp + 1 < DOTS_PER_LINE {
+            self.pos.dot = hp + 1;
+            return None;
+        }
+        if vp < ACTIVE_ROWS {
+            for (d, &index) in self.line_buf.iter().enumerate().skip(1).take(ACTIVE_DOTS) {
+                let c = self.colour(index);
+                self.out.set(vp, d, c, 0);
+            }
+        }
+        self.pos = if vp == LINES - 1 {
+            Position { line: 0, dot: 0 }
+        } else if vp + 1 == LINES - 1 {
+            Position { line: LINES - 1, dot: 0 }
+        } else {
+            Position { line: vp + 1, dot: 0 }
+        };
+        if vp == LINES - 2 {
+            return Some(std::mem::replace(&mut self.out, DotFrame::filled(FrameParity::Even, 0x0f, 0)));
+        }
+        None
     }
 }

@@ -101,6 +101,7 @@ red.
 |---|---|
 | `v2c02-netlist` | The die data parsed by halfphi at build time and embedded; builds data-free with a loud refusal when the extern is not fetched. |
 | `v2c02-sim` | Power-on and the reference's reset recipe, half-stepping, the node dump the golden comparison rides on, and the harness: the 24-edge CPU register protocol and the CHR/VRAM bus, mirrored from the reference. |
+| `v2c02-fast` | The ladder rung: the sequencer table measured out of rung 0 at build time, the datapath authored, held to rung 0's dot goldens. Steps one dot at a time (`step_dot`, the console's grain) or a frame at a time, on a pure-function world or a console's VRAM bus (`VramBus`, where $2007 writes land). |
 | `v2c02-dots` | From switches to dots: the standard P1 world, frame capture off the palette output bus into ntsc-crt's DotFrame, and the sample-exact DAC comparison. |
 
 ## Commands
