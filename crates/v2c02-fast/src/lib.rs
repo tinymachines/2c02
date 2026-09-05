@@ -528,7 +528,16 @@ impl Fast {
         }
         if render_line && e & (SPR_GARBAGE | SPR_PT_LO | SPR_PT_HI) != 0 {
             if !self.evaluated {
-                self.evaluate(vp);
+                // No evaluation on the pre-render line: line 0 draws no
+                // sprites (the chip's own rule, which is also why a Y of
+                // 254 or 255 never shows: no visible line is in range of
+                // it). The standard worlds hold every unused slot at Y=0
+                // or Y=255, and a console's power-on OAM is all ones.
+                if vp < ACTIVE_ROWS {
+                    self.evaluate(vp);
+                } else {
+                    self.sec_n = 0;
+                }
                 self.evaluated = true;
                 self.units = [Unit::default(); 8];
             }
