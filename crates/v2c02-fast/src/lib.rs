@@ -485,8 +485,18 @@ impl Fast {
         }
         let show_sprites = self.mask & 0x10 != 0;
         let base = vp * DOTS_PER_LINE;
-        let render_line = vp < ACTIVE_ROWS || vp == LINES - 1;
-        let e = self.table[base + hp];
+        // With both of $2001's rendering bits clear the chip fetches
+        // nothing and never touches v: the increments and copies below
+        // are the rendering pipeline's, and a program writes VRAM through
+        // $2007 in that state. The flag events (SET_VBL, CLR_FLAGS) are
+        // not the pipeline's and still land. The worlds the gates run
+        // keep rendering on throughout; a console's programs do not.
+        // AUTHORED from the published model: the P3 worlds never
+        // disabled rendering, so rung 0 has not been asked what its
+        // picture shows with rendering off (the backdrop here).
+        let rendering = self.mask & 0x18 != 0;
+        let render_line = rendering && (vp < ACTIVE_ROWS || vp == LINES - 1);
+        let e = if rendering { self.table[base + hp] } else { self.table[base + hp] & (SET_VBL | CLR_FLAGS) };
         if render_line && self.active[base + hp] {
             let mut index = self.bg_pixel();
             if show_sprites && vp < ACTIVE_ROWS && (1..=ACTIVE_DOTS).contains(&hp) {
