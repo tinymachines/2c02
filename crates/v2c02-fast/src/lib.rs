@@ -332,7 +332,7 @@ impl Fast {
         if let Some(dots) = ahead(cur, set) {
             // The set dot is `dots` steps ahead of the next dot to step;
             // the last-stepped dot began (dots + 1) dots before it.
-            let offset = half_steps_into_dot as i32 - 8 * (dots as i32 + 1);
+            let offset = half_steps_into_dot as i32 - 8 * (dots + 1);
             if offset > race::CONSUME_FROM {
                 self.vbl_suppressed = true;
                 self.w = false;
