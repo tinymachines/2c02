@@ -111,6 +111,14 @@ pub struct Fast {
     vram: Box<dyn VramBus>,
     /// The dot stepper's cursor and the frame it is filling.
     pos: Position,
+    /// Whether the frame being stepped is odd: with rendering on, the
+    /// pre-render line of an odd frame is a dot short (dot 340 skipped).
+    /// AUTHORED from the published model and blargg's even/odd tests;
+    /// the P3 table records the even frame, and rung 0's alternation was
+    /// noted in the P3 report but not held to a golden.
+    odd_frame: bool,
+    /// Whether this odd frame's pre-render line did skip its dot.
+    skipped: bool,
     line_buf: [u8; DOTS_PER_LINE],
     evaluated: bool,
     out: DotFrame,
@@ -210,6 +218,8 @@ impl Fast {
             active,
             vram,
             pos: Position { line: LINES - 1, dot: 0 },
+            odd_frame: false,
+            skipped: false,
             line_buf: [0; DOTS_PER_LINE],
             evaluated: false,
             out: DotFrame::filled(FrameParity::Even, 0x0f, 0),
@@ -568,8 +578,16 @@ impl Fast {
         if render_line && self.active[base + hp] {
             // With the background off (sprites on) the pipeline still runs
             // and the background contributes nothing: no pixel, no hit.
-            let mut index = if show_bg { self.bg_pixel() } else { 0 };
-            if show_sprites && vp < ACTIVE_ROWS && (1..=ACTIVE_DOTS).contains(&hp) {
+            // $2001's bits 1 and 2 clip the leftmost eight pixels of the
+            // background and the sprites (no pixel, no hit there):
+            // AUTHORED from the published model, blargg's left_clip test
+            // the oracle.
+            let x0 = hp.wrapping_sub(1);
+            let left = hp >= 1 && x0 < 8;
+            let bg_clipped = left && self.mask & 0x02 == 0;
+            let spr_clipped = left && self.mask & 0x04 == 0;
+            let mut index = if show_bg && !bg_clipped { self.bg_pixel() } else { 0 };
+            if show_sprites && !spr_clipped && vp < ACTIVE_ROWS && (1..=ACTIVE_DOTS).contains(&hp) {
                 let x = hp - 1;
                 if let Some((s, behind, is_zero)) = self.spr_pixel(x) {
                     let bg_opaque = index & 3 != 0;
@@ -675,8 +693,14 @@ impl Fast {
             self.vbl = false;
         }
         // Advance the cursor; a finished visible line lands in the frame,
-        // and line 260's last dot completes it.
-        if hp + 1 < DOTS_PER_LINE {
+        // and line 260's last dot completes it. On an odd frame with
+        // rendering on, the pre-render line ends a dot early.
+        let skip = vp == LINES - 1 && self.odd_frame && rendering;
+        if skip {
+            self.skipped = true;
+        }
+        let last_dot = if skip { DOTS_PER_LINE - 2 } else { DOTS_PER_LINE - 1 };
+        if hp < last_dot {
             self.pos.dot = hp + 1;
             return None;
         }
@@ -694,7 +718,18 @@ impl Fast {
             Position { line: vp + 1, dot: 0 }
         };
         if vp == LINES - 2 {
-            return Some(std::mem::replace(&mut self.out, DotFrame::filled(FrameParity::Even, 0x0f, 0)));
+            let parity = if !self.odd_frame {
+                FrameParity::Even
+            } else if self.skipped {
+                FrameParity::OddShort
+            } else {
+                FrameParity::OddFull
+            };
+            self.odd_frame = !self.odd_frame;
+            self.skipped = false;
+            let mut done = std::mem::replace(&mut self.out, DotFrame::filled(FrameParity::Even, 0x0f, 0));
+            done.parity = parity;
+            return Some(done);
         }
         None
     }
