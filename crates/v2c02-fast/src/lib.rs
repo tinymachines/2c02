@@ -46,6 +46,17 @@ pub fn palette_as_loaded() -> [u8; 32] {
     p
 }
 
+/// Dots after a $2007 write lands (at the stepper's write delay) before
+/// the blank picture follows the stepped v; a $2006 pair shows in the
+/// dot it lands. MEASURED on rung 0 (`blank-probe`): the pair's colour
+/// changes five dots after the access starts, the $2007's eight, and
+/// the stepper's write delay plus the golden's pixel offset account for
+/// five of each. Gated in tests/blank.rs; 2 and 4 are red there.
+pub const BLANK_2007_HOLD: u8 = 3;
+
+/// A line-buffer index marking a dot the blank path already painted.
+const BLANK_DOT: u8 = 0xff;
+
 /// A register write inside a frame, applied on the first half-step of
 /// dot (vpos, hpos) of the stepper's traversal.
 #[derive(Clone, Copy, Debug)]
@@ -120,6 +131,15 @@ pub struct Fast {
     /// Whether this odd frame's pre-render line did skip its dot.
     skipped: bool,
     line_buf: [u8; DOTS_PER_LINE],
+    /// Per dot: $2001's emphasis bits as the dot was presented.
+    line_emph: [u8; DOTS_PER_LINE],
+    /// The blank picture's address: what v was when the picture last
+    /// followed it (see `BLANK_2007_HOLD`).
+    blank_v: u16,
+    blank_hold: u8,
+    /// The mutation tests/blank.rs proves the gate with: the backdrop
+    /// wherever v points.
+    pub blank_shows_backdrop_only: bool,
     evaluated: bool,
     out: DotFrame,
     /// The 32-byte palette RAM.
@@ -238,6 +258,10 @@ impl Fast {
             odd_frame: false,
             skipped: false,
             line_buf: [0; DOTS_PER_LINE],
+            line_emph: [0; DOTS_PER_LINE],
+            blank_v: 0,
+            blank_hold: 0,
+            blank_shows_backdrop_only: false,
             evaluated: false,
             out: DotFrame::filled(FrameParity::Even, 0x0f, 0),
             palette,
@@ -315,6 +339,7 @@ impl Fast {
                     self.vram.write(a, val);
                 }
                 self.v = self.v.wrapping_add(self.increment()) & 0x7fff;
+                self.blank_hold = BLANK_2007_HOLD;
             }
             _ => {}
         }
@@ -522,6 +547,34 @@ impl Fast {
         self.palette[index as usize & 0x1f] & 0x3f
     }
 
+    /// $2001's emphasis bits (bit 5 red, 6 green, 7 blue) as the frame
+    /// carries them beside each dot, taken at the dot the write lands.
+    /// AUTHORED: the bits are the published model's; where they take
+    /// effect was MEASURED on rung 0 (`blank-probe`, row 67: vid_emph
+    /// follows a $2001 write three dots after its access starts, two
+    /// dots ahead of where a $2006 pair's colour shows) with the
+    /// harness's data-at-start access shape, which a 6502's write does
+    /// not have, so the lead is an upper bound and is not modelled: the
+    /// frame's emphasis moves with the write like every other register.
+    #[inline]
+    fn emphasis(&self) -> u8 {
+        self.mask >> 5
+    }
+
+    /// The colour a dot shows with rendering off: the palette entry v
+    /// addresses when v sits in $3F00..$3FFF (the mirror rule the
+    /// register file writes by), the backdrop otherwise. MEASURED on
+    /// rung 0 (`blank-probe`: rows 60..66 of the blank world), gated in
+    /// tests/blank.rs.
+    fn blank_colour(&self) -> u8 {
+        let a = self.blank_v & 0x3fff;
+        if a >= 0x3f00 && !self.blank_shows_backdrop_only {
+            self.palette[Self::palette_index(a)] & 0x3f
+        } else {
+            self.colour(0)
+        }
+    }
+
     /// Render one frame from the current register state.
     pub fn frame(&mut self) -> DotFrame {
         self.frame_with_writes(&[])
@@ -583,9 +636,9 @@ impl Fast {
         // $2007 in that state. The flag events (SET_VBL, CLR_FLAGS) are
         // not the pipeline's and still land. The worlds the gates run
         // keep rendering on throughout; a console's programs do not.
-        // AUTHORED from the published model: the P3 worlds never
-        // disabled rendering, so rung 0 has not been asked what its
-        // picture shows with rendering off (the backdrop here).
+        // What the picture shows with rendering off is MEASURED (the
+        // blank world, `blank_colour`, tests/blank.rs): the palette
+        // entry v addresses when v is in palette RAM, else the backdrop.
         let rendering = self.mask & 0x18 != 0;
         let render_line = rendering && (vp < ACTIVE_ROWS || vp == LINES - 1);
         let e = if rendering { self.table[base + hp] } else { self.table[base + hp] & (SET_VBL | CLR_FLAGS) };
@@ -614,10 +667,25 @@ impl Fast {
                 }
             }
             self.line_buf[hp] = index;
+            self.line_emph[hp] = self.emphasis();
             self.shift_lo <<= 1;
             self.shift_hi <<= 1;
             self.attr_lo <<= 1;
             self.attr_hi <<= 1;
+        }
+        if !render_line || !self.active[base + hp] {
+            // Nothing presented: the blank picture. Marked in the line
+            // buffer so the line's end does not paint over it.
+            if self.blank_hold > 0 {
+                self.blank_hold -= 1;
+            } else {
+                self.blank_v = self.v;
+            }
+            if vp < ACTIVE_ROWS && (1..=ACTIVE_DOTS).contains(&hp) {
+                let c = self.blank_colour();
+                self.out.set(vp, hp, c, self.emphasis());
+                self.line_buf[hp] = BLANK_DOT;
+            }
         }
         if e & FETCH_NT != 0 {
             self.nt = self.read_vram(0x2000 | (self.v & 0x0fff));
@@ -720,8 +788,10 @@ impl Fast {
         }
         if vp < ACTIVE_ROWS {
             for (d, &index) in self.line_buf.iter().enumerate().skip(1).take(ACTIVE_DOTS) {
-                let c = self.colour(index);
-                self.out.set(vp, d, c, 0);
+                if index != BLANK_DOT {
+                    let c = self.colour(index);
+                    self.out.set(vp, d, c, self.line_emph[d]);
+                }
             }
         }
         self.pos = if vp == LINES - 1 {

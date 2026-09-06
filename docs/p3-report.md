@@ -240,6 +240,46 @@ world re-recorded paced, every world's palette through the register
 file is held to the chip's read-back, entry for entry, in all three
 gates.
 
+## The blank picture (2026-09-06, for the console's N6)
+
+What the chip shows with rendering off was never measured: the stepper
+painted the backdrop and said so. `full_palette.nes`, the colour-bars
+cartridge the console's real-capture comparison wants, paints with
+exactly that state: mask $00, v parked in palette RAM through a $2006
+pair, and $2007 writes stepping v mid-line. Through the console it came
+out as blue stripes.
+
+Measured on rung 0 in the standard world with rendering off
+(`blank-probe`; the blank world's writes are `BLANK_WRITES`, rows
+60..67 of one frame):
+
+- With v in $3F00..$3FFF the picture is the palette entry v addresses,
+  through the same mirror rule the register file writes by ($3F10 shows
+  entry 0); an entry the world never wrote shows what the chip holds
+  there (00). With v anywhere else the picture is the backdrop.
+- A $2006 pair shows its colour five dots after the second write's
+  access starts; a $2007 write (of the value the entry already held, so
+  only v moves) shows the stepped entry eight dots after its access
+  starts. The first write of a $2006 pair alone changes nothing; a pair
+  whose second write lands on the next row shows on that row.
+- $2001's emphasis bit reaches `vid_emph` three dots after its write's
+  access starts, and leaves three dots after the clearing write's: two
+  dots ahead of where a colour shows. The harness puts the byte on the
+  bus at the start of the access, which a 6502's write does not, so the
+  lead is an upper bound.
+
+Authored from it (`v2c02-fast`, `blank_colour`, gated in
+`tests/blank.rs` against `goldens/blank.bin`, every visible dot of the
+captured rows): the blank path paints per dot from the entry v
+addresses, the $2006 pair showing in the dot the stepper applies the
+write (its fitted two-dot delay plus the golden's three-dot pixel
+offset is the five), the $2007 step held `BLANK_2007_HOLD` = 3 further
+dots (2 and 4 are red). The frame now carries $2001's emphasis bits
+beside every dot, taken at the dot the write lands; the measured
+two-dot lead is recorded above and not modelled. `MUTATE=1` (the
+backdrop wherever v points) is red on 1,625 dots. The console's
+`full_palette.nes` now shows its bars.
+
 ## Carried to P1, recorded here and not changed
 
 - The P1 report described "the 16-entry palette" as if the chip held

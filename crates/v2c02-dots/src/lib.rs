@@ -150,6 +150,40 @@ pub struct TimedWrite {
     pub val: u8,
 }
 
+/// The blank world's mid-frame writes: rendering off (mask $00) after
+/// the standard program, then on named rows a $2006 pair into palette
+/// RAM, $2007 writes of the value the entry already holds (so v steps
+/// and the palette does not change), a pair back out to $2000, the
+/// $3F10 mirror, a first $2006 write alone, and an entry the world
+/// never wrote, and one emphasis bit raised and dropped mid-line with
+/// rendering still off. What the chip shows with rendering off is the
+/// measurement (`blank-probe`, docs/p3-report.md); `v2c02-fast`'s
+/// blank path is gated against it.
+pub const BLANK_ROWS: usize = 68;
+pub const BLANK_WRITES: [TimedWrite; 21] = [
+    TimedWrite { vpos: 60, hpos: 10, reg: 6, val: 0x3f },
+    TimedWrite { vpos: 60, hpos: 50, reg: 6, val: 0x05 },
+    TimedWrite { vpos: 60, hpos: 150, reg: 7, val: 0x28 },
+    TimedWrite { vpos: 60, hpos: 250, reg: 7, val: 0x14 },
+    TimedWrite { vpos: 62, hpos: 10, reg: 6, val: 0x3f },
+    TimedWrite { vpos: 62, hpos: 50, reg: 6, val: 0x09 },
+    TimedWrite { vpos: 62, hpos: 150, reg: 6, val: 0x20 },
+    TimedWrite { vpos: 62, hpos: 190, reg: 6, val: 0x00 },
+    TimedWrite { vpos: 63, hpos: 10, reg: 6, val: 0x3f },
+    TimedWrite { vpos: 63, hpos: 50, reg: 6, val: 0x10 },
+    TimedWrite { vpos: 63, hpos: 150, reg: 6, val: 0x3f },
+    TimedWrite { vpos: 63, hpos: 190, reg: 6, val: 0x04 },
+    TimedWrite { vpos: 64, hpos: 10, reg: 6, val: 0x3f },
+    TimedWrite { vpos: 64, hpos: 50, reg: 6, val: 0x0d },
+    TimedWrite { vpos: 64, hpos: 150, reg: 6, val: 0x3f },
+    TimedWrite { vpos: 65, hpos: 100, reg: 6, val: 0x0e },
+    TimedWrite { vpos: 65, hpos: 200, reg: 7, val: 0x27 },
+    TimedWrite { vpos: 66, hpos: 10, reg: 6, val: 0x3f },
+    TimedWrite { vpos: 66, hpos: 50, reg: 6, val: 0x1d },
+    TimedWrite { vpos: 67, hpos: 100, reg: 1, val: 0x20 },
+    TimedWrite { vpos: 67, hpos: 200, reg: 1, val: 0x00 },
+];
+
 /// The register program of the scroll world, before the frame: the
 /// standard world's, then the background table at $1000 and the
 /// nametable at $2400 ($2000 = $11), a scroll of x = $25 (coarse 4,

@@ -174,6 +174,15 @@ node tools/golden-trace/gen-write-probe.js
 cargo run --release -p v2c02-dots --example p3-write-probe
                                      # the $2007 write path: what lands, by
                                      # idle after the pair and between writes
+cargo test --release -p v2c02-fast --test blank
+                                     # the blank picture: rendering off, the
+                                     # palette entry v addresses (a $2006
+                                     # pair, $2007 steps, emphasis) held to
+                                     # rung 0's capture of the blank world;
+                                     # MUTATE=1 backdrop only, MUTATE=2 the
+                                     # $2007 hold a dot either way, both red
+cargo run --release -p v2c02-dots --example blank-probe
+                                     # measure it and record goldens/blank.bin
 cargo test --release -p v2c02-fast --test race
                                      # the $2002 read race at every half-step
                                      # of the two dots before the set, held to
