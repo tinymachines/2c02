@@ -164,23 +164,40 @@ pub struct Fast {
     pub spr_overflow: bool,
 }
 
-/// The $2002 read race, from the P2 measurement on rung 0
-/// (`docs/p2-report.md`, "The VBL read race"): a read whose access starts
-/// 24 or more PPU half-steps before `set_vbl_flag` rises misses the flag
-/// and the flag sets after it; one starting 18 or 12 before returns 0
-/// AND the flag never sets (the missed-vblank window, about a dot and a
-/// half wide); one starting 6 before or later returns 1 and consumes it.
-/// The offsets P2 could schedule were multiples of six; the two
-/// boundaries below sit between the measured columns and are labelled
-/// fitted, to be moved only by a measurement (blargg's 02-vbl_set_time
-/// walks the window one dot at a time; the console's gate 1 reads it).
+/// The $2002 read race, MEASURED on rung 0 at every half-step with the
+/// console's access shape (`v2c02-sim --example race-shape-probe`,
+/// 2026-09-05): the register address, R/W and /CS applied together at
+/// the CPU's phi1 (the NES-001's select is the 74LS139's decode of the
+/// address alone, nes-glue), held twelve master half-steps, the byte
+/// taken at the eleventh. Against the first half-step of the dot in
+/// which `set_vbl_flag` rises (vpos 241, hpos 1; the rise is on the dot
+/// boundary), a read starting eight or more half-steps before misses:
+/// it returns 0, the flag sets after it, /INT falls. One starting seven
+/// to one half-steps before returns 0 and the flag never sets, so /INT
+/// never falls (the missed-vblank window, seven half-steps wide). One
+/// starting on or after the boundary returns 1 and clears the flag one
+/// half-step in, and /INT, which fell with the flag, rises again.
+///
+/// P2's earlier table (`docs/p2-report.md`) was taken with the
+/// reference's 24-edge protocol, the address eight half-steps ahead of
+/// the select, and its windows sit correspondingly earlier; the probe
+/// reproduces that table too, and a third shape with the select six
+/// half-steps after the address gives a third. The one thing that moves
+/// with the shape besides the window's edge: a read whose select lands
+/// after the set but whose address led it by L half-steps returns 1,
+/// clears the flag, and /INT never falls at all, for selects up to L
+/// after the set. With no lead there is no such window here. The
+/// documented NES (blargg's 06-suppression, nesdev's account) shows two
+/// dots of exactly that, which no lead the board wires can produce;
+/// the /INT pin's own timing against the flag on a real console is the
+/// bench measurement that settles it, and until then the console holds
+/// the switch-level chip.
 pub mod race {
-    /// Reads starting later than this many half-steps before the set
-    /// consume the flag (return 1, clear it).
-    pub const CONSUME_FROM: i32 = -9;
-    /// Reads starting later than this, and not consuming, suppress the
-    /// set; earlier reads miss it.
-    pub const SUPPRESS_FROM: i32 = -21;
+    /// Reads starting this many half-steps before the set's dot, or
+    /// later, and before the dot itself, suppress the set; earlier
+    /// reads miss it. A read starting in the set's dot or later finds
+    /// the flag stepped and consumes it in the ordinary read.
+    pub const SUPPRESS_FROM: i32 = -7;
 }
 
 impl Fast {
@@ -341,14 +358,11 @@ impl Fast {
         };
         if let Some(dots) = ahead(cur, set) {
             // The set dot is `dots` steps ahead of the next dot to step;
-            // the last-stepped dot began (dots + 1) dots before it.
+            // the last-stepped dot began (dots + 1) dots before it, so
+            // this is the read's start against the set dot's first
+            // half-step, negative before it.
             let offset = half_steps_into_dot as i32 - 8 * (dots + 1);
-            if offset > race::CONSUME_FROM {
-                self.vbl_suppressed = true;
-                self.w = false;
-                return 0x80 | ((self.spr0_hit.is_some() as u8) << 6) | ((self.spr_overflow as u8) << 5);
-            }
-            if offset > race::SUPPRESS_FROM {
+            if offset >= race::SUPPRESS_FROM {
                 self.vbl_suppressed = true;
                 self.w = false;
                 return ((self.spr0_hit.is_some() as u8) << 6) | ((self.spr_overflow as u8) << 5);

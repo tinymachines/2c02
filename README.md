@@ -174,6 +174,24 @@ node tools/golden-trace/gen-write-probe.js
 cargo run --release -p v2c02-dots --example p3-write-probe
                                      # the $2007 write path: what lands, by
                                      # idle after the pair and between writes
+cargo test --release -p v2c02-fast --test race
+                                     # the $2002 read race at every half-step
+                                     # of the two dots before the set, held to
+                                     # the table measured below; MUTATE=1
+                                     # moves the read one half-step, red
+cargo run --release -p v2c02-sim --example race-shape-probe -- [set|clear] [console|cs6|reference]
+                                     # the race on rung 0 with the console's
+                                     # access shape (address, R/W and /CS
+                                     # together at phi1, the byte at the
+                                     # eleventh half-step), the M2-qualified
+                                     # select, or the reference's 24-edge
+                                     # protocol: one saved state sixty
+                                     # half-steps before the event, every
+                                     # offset from it (minutes, not hours).
+                                     # The window's edge and the width of a
+                                     # "read as set, no NMI" band both follow
+                                     # the address-to-select lead; the console
+                                     # gate's measurement (N5)
 cargo run --release -p v2c02-fast --example p3-bench -- 500   # frame time
 cargo run --release -p v2c02-fast --example p3-fit    # the golden offset, fitted
 cargo run --release -p v2c02-dots --example p3-fetch-probe -- /tmp/frame.csv
