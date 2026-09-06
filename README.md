@@ -174,6 +174,14 @@ node tools/golden-trace/gen-write-probe.js
 cargo run --release -p v2c02-dots --example p3-write-probe
                                      # the $2007 write path: what lands, by
                                      # idle after the pair and between writes
+cargo test --release -p v2c02-fast --test p3_sprites16
+                                     # 8x16 sprites: the tall-sprite world
+                                     # (the sprite world with $2000 bit 5)
+                                     # dot for dot with rung 0, sprite 0's
+                                     # hit included; MUTATE=1 draws them
+                                     # eight tall, red
+cargo run --release -p v2c02-dots --example p3-sprites16-golden
+                                     # record the tall-sprite golden
 cargo test --release -p v2c02-fast --test blank
                                      # the blank picture: rendering off, the
                                      # palette entry v addresses (a $2006

@@ -140,6 +140,30 @@ pub fn sprite_program() -> Vec<(u8, u8, u64)> {
     p
 }
 
+/// The tall-sprite world: the sprite world with $2000's bit 5 set, so
+/// every sprite is 8 x 16, its two halves from consecutive tiles in the
+/// bank the tile number's low bit names. The world's VRAM function
+/// gives every tile row a byte of its own, so which half and which bank
+/// a sprite line came from is in the picture. What the chip does with
+/// it is the measurement `p3-sprites16-golden` records for the
+/// stepper's 8x16 gate.
+pub fn tall_sprite_world() -> Harness {
+    let mut h = standard_world();
+    for (reg, val, idle) in tall_sprite_program() {
+        h.write(reg, val);
+        h.wait(idle);
+    }
+    h
+}
+
+/// The sprite world's program, then $2000 <- $20 (8 x 16 sprites, NMI
+/// off, tables at $0000, nametable 0).
+pub fn tall_sprite_program() -> Vec<(u8, u8, u64)> {
+    let mut p = sprite_program();
+    p.push((0, 0x20, 48));
+    p
+}
+
 /// A register write scheduled inside a captured frame: the access
 /// starts on the first half-step of dot (vpos, hpos).
 #[derive(Clone, Copy, Debug)]

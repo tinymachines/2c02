@@ -140,6 +140,9 @@ pub struct Fast {
     /// The mutation tests/blank.rs proves the gate with: the backdrop
     /// wherever v points.
     pub blank_shows_backdrop_only: bool,
+    /// The mutation tests/p3_sprites16.rs proves its gate with: $2000's
+    /// bit 5 ignored, every sprite eight tall.
+    pub tall_sprites_off: bool,
     evaluated: bool,
     out: DotFrame,
     /// The 32-byte palette RAM.
@@ -262,6 +265,7 @@ impl Fast {
             blank_v: 0,
             blank_hold: 0,
             blank_shows_backdrop_only: false,
+            tall_sprites_off: false,
             evaluated: false,
             out: DotFrame::filled(FrameParity::Even, 0x0f, 0),
             palette,
@@ -526,11 +530,20 @@ impl Fast {
     /// rows cover it, in OAM order, the first eight kept. Authored as one
     /// step at the sprite window; the chip spreads it over dots 65..256
     /// (measured), which matters for the flags' timing, not the picture.
+    /// $2000's bit 5: sprites sixteen tall, each the tile the OAM names
+    /// with its low bit cleared over the next one, in the bank that low
+    /// bit names. AUTHORED from the published model, held to rung 0's
+    /// tall-sprite world in tests/p3_sprites16.rs.
+    fn sprite_height(&self) -> usize {
+        if self.ctrl & 0x20 != 0 && !self.tall_sprites_off { 16 } else { 8 }
+    }
+
     fn evaluate(&mut self, line: usize) {
         self.sec_n = 0;
+        let height = self.sprite_height();
         for i in 0..64 {
             let y = self.oam[i * 4] as usize;
-            if line < y || line - y >= 8 {
+            if line < y || line - y >= height {
                 continue;
             }
             if self.sec_n == 8 {
@@ -617,7 +630,6 @@ impl Fast {
             // The picture's frame begins at the pre-render line: its
             // vertical copy sets v for row 0 and its dots 321..336
             // prefetch row 0's first two tiles.
-            assert!(self.ctrl & 0x20 == 0, "8x16 sprites are not modelled");
             let backdrop = self.colour(0);
             self.out = DotFrame::filled(FrameParity::Even, backdrop, 0);
             self.spr0_hit = None;
@@ -726,12 +738,20 @@ impl Fast {
                 self.fetched += 1;
                 if k < self.sec_n {
                     let (y, tile, attr, x, is_zero) = self.sec[k];
-                    let mut row = (vp - y as usize) as u16 & 7;
+                    let height = self.sprite_height() as u16;
+                    let mut row = (vp - y as usize) as u16 & (height - 1);
                     if attr & 0x80 != 0 {
-                        row = 7 - row;
+                        // The flip runs across both halves of a tall sprite.
+                        row = height - 1 - row;
                     }
-                    let spr_hi = (self.ctrl & 0x08 != 0) as u16;
-                    let addr = (spr_hi << 12) | ((tile as u16) << 4) | row;
+                    let addr = if height == 16 {
+                        let bank = (tile & 1) as u16;
+                        let index = (tile & 0xfe) as u16 + (row >> 3);
+                        (bank << 12) | (index << 4) | (row & 7)
+                    } else {
+                        let spr_hi = (self.ctrl & 0x08 != 0) as u16;
+                        (spr_hi << 12) | ((tile as u16) << 4) | row
+                    };
                     self.units[k] = Unit {
                         lo: self.read_vram(addr),
                         hi: self.read_vram(addr | 8),

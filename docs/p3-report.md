@@ -280,6 +280,24 @@ two-dot lead is recorded above and not modelled. `MUTATE=1` (the
 backdrop wherever v points) is red on 1,625 dots. The console's
 `full_palette.nes` now shows its bars.
 
+## 8x16 sprites (2026-09-06, for the console's carried item)
+
+The stepper refused $2000's bit 5 by name until now: the sprite worlds
+never set it, so rung 0 had not been asked. The tall-sprite world is
+the sprite world with the bit set (`tall_sprite_world`), whose VRAM
+function gives every tile row its own byte, so which half and which
+bank each sprite line was fetched from is in the picture. Captured off
+rung 0 (`p3-sprites16-golden`): sprite 0's hit rose at (93, 188), the
+overflow at (120, 143), both later than the eight-tall world's as a
+taller sprite would have them. The rule the stepper carries, AUTHORED
+from the published model: sixteen lines in range, the two halves from
+the OAM tile with its low bit cleared and the next tile, the bank from
+that low bit, the vertical flip running across both halves. Held dot
+for dot on every visible dot and on sprite 0's hit in
+`tests/p3_sprites16.rs`; `MUTATE=1` draws the world eight tall and is
+red on 685 dots. blargg's sprite_hit 08 (double height) passes through
+the console with it.
+
 ## Carried to P1, recorded here and not changed
 
 - The P1 report described "the 16-entry palette" as if the chip held
