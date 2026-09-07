@@ -227,6 +227,12 @@ node tools/golden-trace/gen.js       # regenerate the P0 trace
                                      # (601 states, about 5 s)
 node tools/golden-trace/gen-p1.js    # regenerate the P1 trace (712,100
                                      # pre-roll + 4,008 states, ~40 min)
+cargo run --release -p v2c02-sim --example ale-phase    # ALE against pclk0 with
+                                                        # rendering on, in master
+                                                        # half-steps: every rise on
+                                                        # a dot's start. What the
+                                                        # bench's alignment
+                                                        # classifier stands on
 cargo run --release -p v2c02-sim --example bench        # quiescent throughput
 cargo run --release -p v2c02-dots --example p1-bench    # rendering-on throughput
 cargo run --release -p v2c02-dots --example first-light # goldens/p1-first-light.ppm
