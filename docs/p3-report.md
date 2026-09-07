@@ -298,6 +298,16 @@ for dot on every visible dot and on sprite 0's hit in
 red on 685 dots. blargg's sprite_hit 08 (double height) passes through
 the console with it.
 
+## ALE against the dot clock (2026-09-07, for the bench)
+
+The bench's alignment classifier (tinymachines/nes-bench, B2) reads
+ALE off the scope and the console's `Alignment` is defined on pclk0,
+so where ALE sits inside a dot had to be a number.
+`v2c02-sim/examples/ale-phase.rs`, rendering on: 2,508 ALE rises over
+40,000 master half-steps, every one on the half-step pclk0 rose, sixteen
+half-steps apart with the sprite fetches' eights. An ALE rise on the
+scope is a dot's start.
+
 ## Carried to P1, recorded here and not changed
 
 - The P1 report described "the 16-entry palette" as if the chip held
