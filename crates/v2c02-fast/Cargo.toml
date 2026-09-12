@@ -7,7 +7,7 @@ description = "The 2C02 ladder: a per-dot stepper whose sequencer table is measu
 
 # Run time: the dot frame contract and nothing else. No node, no netlist.
 [dependencies]
-nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.1" }
+nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.2" }
 
 # Build time only: build.rs runs the switch-level chip for one frame in
 # the standard world and records the per-dot event table into OUT_DIR
@@ -17,8 +17,8 @@ nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.1" }
 v2c02-netlist = { path = "../v2c02-netlist" }
 v2c02-sim = { path = "../v2c02-sim" }
 v2c02-dots = { path = "../v2c02-dots" }
-nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.1" }
+nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.2" }
 
 [dev-dependencies]
 v2c02-dots = { path = "../v2c02-dots" }
-ntsc-grid = { git = "https://github.com/tinymachines/ntsc-crt", tag = "v0.2.2" }
+ntsc-grid = { git = "https://github.com/tinymachines/ntsc-crt", tag = "v0.2.9" }

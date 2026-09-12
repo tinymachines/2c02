@@ -27,9 +27,9 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "indexmap"
-version = "2.14.1"
+version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07aa2048142242915a31d35844fb311e0e53fcca590c3a0a40dcf1b841fa09eb"
+checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown",
@@ -43,13 +43,13 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "nes-bus"
-version = "0.1.0"
-source = "git+https://github.com/tinymachines/nes-bus?tag=v0.1.1#68718e8ffa4523ef027d0b8f2bd05d3748dd709a"
+version = "0.1.2"
+source = "git+https://github.com/tinymachines/nes-bus?tag=v0.1.2#220ebf8913205c472c56a4d725da1e970b328cc0"
 
 [[package]]
 name = "ntsc-crt"
 version = "0.1.0"
-source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.2#c484a712900bf6d7cfb9149ed0e3a6fe578345bf"
+source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.9#2fc4121dffd5d084cc39538a14723215971bce48"
 dependencies = [
  "ntsc-decode",
  "ntsc-grid",
@@ -58,7 +58,7 @@ dependencies = [
 [[package]]
 name = "ntsc-decode"
 version = "0.1.0"
-source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.2#c484a712900bf6d7cfb9149ed0e3a6fe578345bf"
+source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.9#2fc4121dffd5d084cc39538a14723215971bce48"
 dependencies = [
  "ntsc-grid",
  "toml",
@@ -67,7 +67,7 @@ dependencies = [
 [[package]]
 name = "ntsc-grid"
 version = "0.1.0"
-source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.2#c484a712900bf6d7cfb9149ed0e3a6fe578345bf"
+source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.9#2fc4121dffd5d084cc39538a14723215971bce48"
 dependencies = [
  "nes-bus",
  "num-rational",
@@ -76,7 +76,7 @@ dependencies = [
 [[package]]
 name = "ntsc-source-nes"
 version = "0.1.0"
-source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.2#c484a712900bf6d7cfb9149ed0e3a6fe578345bf"
+source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.9#2fc4121dffd5d084cc39538a14723215971bce48"
 dependencies = [
  "nes-bus",
  "ntsc-grid",
@@ -180,9 +180,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.4"
+version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6275cddf4610d1775e6d1fe9469b2e77d0f39fd98fb7450901b821e0c53649f"
+checksum = "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9"
 dependencies = [
  "proc-macro2",
  "quote",
