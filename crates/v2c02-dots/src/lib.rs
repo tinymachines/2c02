@@ -49,6 +49,22 @@ pub fn standard_world() -> Harness {
     h
 }
 
+/// The standard world with another background palette: the same warm-up
+/// and program with `pal`'s sixteen entries in place of `PALETTE`, so a
+/// world of one colour can be put in front of the DAC (the hue gate in
+/// `tests/dac.rs`, which found the standard palette had never shown the
+/// chip a hue-12 pixel).
+pub fn world_with_palette(pal: &[u8; 16]) -> Harness {
+    let mut h = Harness::new(Ppu::power_on(), vram);
+    h.wait(712_100);
+    h.read(2);
+    for (reg, val, idle) in program_with_palette(pal) {
+        h.write(reg, val);
+        h.wait(idle);
+    }
+    h
+}
+
 /// A register program: (register, value, half-steps of idle after the
 /// access). The idle is the harness's pacing; the stepper's register
 /// file ignores it.
@@ -63,8 +79,13 @@ pub type Program = Vec<(u8, u8, u64)>;
 /// probe, docs/p3-report.md), which is how the world was first
 /// recorded; re-recorded paced on 2026-09-04.
 pub fn standard_program() -> Program {
+    program_with_palette(&PALETTE)
+}
+
+/// The standard program with another palette in it.
+pub fn program_with_palette(pal: &[u8; 16]) -> Program {
     let mut p = vec![(0u8, 0x00u8, 0u64), (1, 0x00, 0), (6, 0x3f, 0), (6, 0x00, 0)];
-    p.extend(PALETTE.iter().map(|&v| (7, v, 24)));
+    p.extend(pal.iter().map(|&v| (7, v, 24)));
     p.extend([(6, 0x20, 0), (6, 0x00, 0), (5, 0x00, 0), (5, 0x00, 0), (1, 0x0a, 0)]);
     p
 }
