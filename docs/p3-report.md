@@ -330,6 +330,31 @@ scope is a dot's start.
   (261, 340) is the end of an even frame, so the frame captured is the
   odd one. No visible dot changes.
 
+## The vertical sync's dot (2026-09-18, for the bench)
+
+`vsync-probe` (`v2c02-dots`): the DAC's sync-tip leg read every
+half-step through one frame of the standard world with rendering on,
+every run of it as (row, dot) start to end. The horizontal sync is
+asserted from dot 280 to dot 305 of every row, 25.1 dots (the table
+the encoder follows says 277..301: the DAC shows every sync three dots
+after the counter's number, and the offset is the same for the
+vertical sync, so nothing moves relative to the horizontal). The
+vertical sync is three broad pulses, from (244, 280), (245, 280) and
+(246, 280) to dot 257 of the row after, 319.2 dots each, with the
+blanking leg asserted across the 23-dot gaps (the serration) and no
+burst on rows 244 to 246; row 247 closes with an ordinary sync at 280
+and its burst at 309..324. The console's record shows the same shape
+(nes-bench run 20260918-135721: the broad pulse begins exactly one
+line after the preceding horizontal sync, 0.934 line long, three of
+them a line apart), so the die and the part agree and the encoder was
+what differed: ntsc-crt's `ntsc-source-nes` had the onset at row 245
+dot 0, 64 dots late, and a 32-dot serration; it is held to this
+measurement from v0.2.10, and the bench's `poll-line.py` places the
+part's polls from it. The 0.6-line offset between the part's poll and
+the model's, open in the bench's notes, was this together with the
+model side's line arithmetic; the game's poll now agrees to 0.03 line
+(nes-bench, `mario-dissection.md`).
+
 ## Next, inside P3
 
 Sprites (evaluation and fetch in the datapath, held to a dot golden

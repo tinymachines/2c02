@@ -191,6 +191,16 @@ cargo test --release -p v2c02-fast --test blank
                                      # $2007 hold a dot either way, both red
 cargo run --release -p v2c02-dots --example blank-probe
                                      # measure it and record goldens/blank.bin
+cargo run --release -p v2c02-dots --example vsync-probe
+                                     # the vertical sync's shape: the sync-tip
+                                     # leg every half-step through a frame,
+                                     # every run as (row, dot) start..end. Three
+                                     # broad pulses from (244, 280), (245, 280),
+                                     # (246, 280) to dot 257 of the row after,
+                                     # 319 dots each; the horizontal sync is
+                                     # (r, 280)..(r, 305). ntsc-crt's encoder
+                                     # and the bench's poll-line.py are held
+                                     # to it (2026-09-18)
 cargo test --release -p v2c02-fast --test race
                                      # the $2002 read race at every half-step
                                      # of the two dots before the set, held to
