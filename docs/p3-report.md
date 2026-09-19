@@ -355,6 +355,40 @@ the model's, open in the bench's notes, was this together with the
 model side's line arithmetic; the game's poll now agrees to 0.03 line
 (nes-bench, `mario-dissection.md`).
 
+## The sprite window's address bus, 2026-09-20
+
+`v2c02-fast` fetched only the sprites it was going to draw. Every slot
+with no sprite in it, and the two nametable fetches that open each
+slot, cost nothing to the picture, so the stepper skipped them and its
+goldens never noticed: the bytes are discarded on the part too.
+
+They are not free on a console. A cartridge that counts lines watches
+PPU A12, and on a line with no sprites in range the skipped fetches
+meant A12 never moved at all, so an MMC3 board counted nothing on that
+line. blargg's `2-details` says a frame clocks the counter 241 times;
+without them a screen with an empty status bar clocked it far fewer.
+
+What the die does, MEASURED with `v2c02-dots`' `p3-fetch-probe` on the
+standard world, whose OAM is all ones so no sprite is ever in range
+(line 20, dots 257 to 320):
+
+| dot | address | what it is |
+|---|---|---|
+| 257 | `$2442` | the slot's first nametable fetch |
+| 259 | `$2040` | its second |
+| 261 | `$0ff3` | the pattern's low byte: tile `$ff` of the sprite table |
+| 263 | `$0ffb` | its high byte |
+| 265, 267 | `$2040` | the next slot's two |
+| 269, 271 | `$0ff2`, `$0ffa` | and its pattern, the row's three bits one less |
+
+So the chip fetches tile `$ff` of the sprite pattern table for a slot
+with nothing in it, eight slots a line, and A12 through the window is
+the table bit. The stepper now makes both fetches and discards them,
+and issues one nametable fetch per garbage dot; the row's low bits of
+the dummy address are not the die's and nothing reads them, which this
+says rather than hides. The P3 goldens are unchanged, because the
+picture is.
+
 ## Next, inside P3
 
 Sprites (evaluation and fetch in the datapath, held to a dot golden

@@ -762,7 +762,34 @@ impl Fast {
                         is_zero,
                         active: true,
                     };
+                } else {
+                    // A slot with no sprite in it still fetches, and the
+                    // address it fetches from is why a cartridge can
+                    // count lines: MEASURED on the switch-level chip
+                    // (v2c02-dots' p3-fetch-probe, the standard world
+                    // whose OAM is all ones, line 20), which reads
+                    // $0ff3 and $0ffb at dots 261 and 263 and $0ff2 and
+                    // $0ffa at every slot after: tile $ff of the sprite
+                    // pattern table. The row's three bits differ from
+                    // slot to slot and nothing downstream reads the
+                    // bytes; A12 is what this is here for, and A12 is
+                    // the table bit. Without these fetches a line with
+                    // no sprites moves A12 not at all, and blargg's
+                    // `2-details` counts 241 clocks in a frame where a
+                    // console would see far fewer.
+                    let spr_hi = (self.ctrl & 0x08 != 0) as u16;
+                    let addr = (spr_hi << 12) | 0x0ff0;
+                    self.read_vram(addr);
+                    self.read_vram(addr | 8);
                 }
+            }
+            if e & SPR_GARBAGE != 0 {
+                // The two nametable fetches that open each slot: the
+                // probe reads $2442 then $2040 on line 20. They pull
+                // A12 low for two dots between one slot's patterns and
+                // the next, which a counting cartridge's filter is
+                // there to ignore.
+                self.read_vram(0x2000 | (self.v & 0x0fff));
             }
         }
         if e & INC_X != 0 {
