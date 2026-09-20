@@ -7,7 +7,7 @@
 //!
 //! - `pal_d0..5_out` carries the pixel's colour during the pclk1 phase
 //!   of each dot and precharges to zero during pclk0.
-//! - The video DAC has eleven level legs whose meanings were calibrated
+//! - The video DAC has twelve level legs whose meanings were calibrated
 //!   from a scanline's known geography, NOT from their names:
 //!   `vid_sync_l` is the sync tip, **`vid_sync_h` is the blanking
 //!   level** (which is why the $xE/$xF blacks assert it: the
@@ -15,6 +15,14 @@
 //!   `vid_burst_l/h` are the burst's two levels, and `vid_lumaR_l/h`
 //!   are the table's LOW[R]/HIGH[R] columns. One half-step is one grid
 //!   sample: the master half-clock IS 12 x f_sc.
+//!
+//! Twelve is the die's count: the netlist names `vid_sync_l/h`,
+//! `vid_burst_l/h` and `vid_luma0..3_l/h`, aliased `vid_0..vid_11`, with
+//! `vid_emph` beside them as the emphasis attenuator rather than a level.
+//! `Taps::legs` holds only eleven of them because `LEG_NAMES` stops at
+//! `vid_luma3_l`; `Taps::leg_mask` reads `vid_luma3_h` by name and sets
+//! bit 11 itself, so the mask is still twelve bits wide and
+//! `leg_voltage` indexes all twelve.
 
 use halfphi::NodeId;
 use nes_bus::{DotFrame, FrameParity, ACTIVE_ROWS, DOTS_PER_LINE};
