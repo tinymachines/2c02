@@ -162,8 +162,9 @@ on every row probed. With P1's capture convention (hpos h to dot h + 1)
 the golden holds pixel x at dot x + 4; the stepper emits pixel x at the
 contract's dot x + 1 and the gate compares at +3.
 
-**The fit.** Offset 3, 0 mismatches of 61,440, the minimum by a factor
-the neighbours make obvious.
+**The fit.** Offset 3, 0 mismatches of 61,440, the 256 pixels of each
+of the 240 rows without the gate's three lead-in dots, the minimum by a
+factor the neighbours make obvious.
 
 ## Step 2: sprites
 
@@ -235,7 +236,7 @@ at its dot.
 
 The palette was at first the one register-file output not held to the
 chip: the file derived the palette the world wrote, the chip held what
-its write path landed. With the write path fixed (below) and the P1
+its write path landed. With the write path fixed (above) and the P1
 world re-recorded paced, every world's palette through the register
 file is held to the chip's read-back, entry for entry, in all three
 gates.
@@ -391,7 +392,7 @@ picture is.
 
 ## Next, inside P3
 
-Sprites (evaluation and fetch in the datapath, held to a dot golden
-from the P2 sprite world), the register file and scroll, then the
-blargg suites with a CPU attached, then the real capture (handoff
-section 5).
+Sprites and the register file and scroll were the plan's next two after
+step 1, and they are steps 2 and 3 above, each measured and held to a
+dot golden. After them the plan has the blargg suites with a CPU
+attached, then the real capture (handoff section 5).

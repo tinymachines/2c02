@@ -46,8 +46,8 @@ sprite scenario matches the reference at every checkpoint.
 
 `set_vbl_flag` rises at **vpos 241, hpos 1** (the wiki's "scanline 241
 dot 1", from silicon). Reading $2002 with the access sweeping across
-that set produced the classic three outcomes, and the schedule pins
-three of them:
+that set produced the classic three outcomes, and the schedule pins one
+read in each:
 
 | offset (read start minus set) | returns bit 7 | flag after | NMI |
 |---|---|---|---|

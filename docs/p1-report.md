@@ -105,7 +105,7 @@ written, in the order they were needed:
   the palette landed at a garbage address.
 - `pal_d0..5_out` carries the pixel's colour during the **pclk1**
   phase of each dot and precharges during pclk0.
-- The eleven DAC level legs were calibrated **from a scanline's known
+- The twelve DAC level legs were calibrated **from a scanline's known
   geography, not from their names**: `vid_sync_l` is the sync tip and
   `vid_sync_h` is the *blanking* level, which is why the $xE/$xF
   blacks assert it, exactly as the transcribed table says those
