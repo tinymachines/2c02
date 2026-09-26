@@ -43,13 +43,13 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "nes-bus"
-version = "0.1.6"
-source = "git+https://github.com/tinymachines/nes-bus?tag=v0.1.6#3c69ed19820320575bc42da175043401883db422"
+version = "0.1.7"
+source = "git+https://github.com/tinymachines/nes-bus?tag=v0.1.7#e1167361d6f0e7dc73b9da8befa456353510d37a"
 
 [[package]]
 name = "ntsc-crt"
 version = "0.1.0"
-source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.16#111aa20130e479ccb25c7a41e3ceae4d8869a974"
+source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.17#8cb660e100359e083f0d5da5f4b6685986fc1047"
 dependencies = [
  "ntsc-decode",
  "ntsc-grid",
@@ -58,7 +58,7 @@ dependencies = [
 [[package]]
 name = "ntsc-decode"
 version = "0.1.0"
-source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.16#111aa20130e479ccb25c7a41e3ceae4d8869a974"
+source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.17#8cb660e100359e083f0d5da5f4b6685986fc1047"
 dependencies = [
  "ntsc-grid",
  "toml",
@@ -67,7 +67,7 @@ dependencies = [
 [[package]]
 name = "ntsc-grid"
 version = "0.1.0"
-source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.16#111aa20130e479ccb25c7a41e3ceae4d8869a974"
+source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.17#8cb660e100359e083f0d5da5f4b6685986fc1047"
 dependencies = [
  "nes-bus",
  "num-rational",
@@ -76,7 +76,7 @@ dependencies = [
 [[package]]
 name = "ntsc-source-nes"
 version = "0.1.0"
-source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.16#111aa20130e479ccb25c7a41e3ceae4d8869a974"
+source = "git+https://github.com/tinymachines/ntsc-crt?tag=v0.2.17#8cb660e100359e083f0d5da5f4b6685986fc1047"
 dependencies = [
  "nes-bus",
  "ntsc-grid",
