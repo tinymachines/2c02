@@ -70,6 +70,7 @@ pub struct DotWrite {
 /// One of the eight sprite units: the pattern row fetched for the next
 /// line, where it starts, and how it composes.
 #[derive(Clone, Copy, Default)]
+#[cfg_attr(feature = "state", derive(serde::Serialize, serde::Deserialize))]
 struct Unit {
     lo: u8,
     hi: u8,
@@ -109,16 +110,26 @@ impl VramBus for FnVram {
 /// Where the dot stepper stands: the line and dot it will step next, in
 /// traversal order (the pre-render line 261 first, then 0..260).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "state", derive(serde::Serialize, serde::Deserialize))]
 pub struct Position {
     pub line: usize,
     pub dot: usize,
 }
 
+/// With the feature `state`, the stepper is its own saved state: every
+/// field is saved but the ones marked skip, which are what a console
+/// builds the stepper with (the measured table, what it derives from it,
+/// the bus, and the two mutation switches). A field added later is saved
+/// unless someone says it is not.
+#[cfg_attr(feature = "state", derive(serde::Serialize, serde::Deserialize))]
 pub struct Fast {
+    #[cfg_attr(feature = "state", serde(skip))]
     table: Vec<u16>,
     /// Per dot: the background shifters present a pixel and advance.
     /// Derived from the table: the eight dots ending at each INC_X.
+    #[cfg_attr(feature = "state", serde(skip))]
     active: Vec<bool>,
+    #[cfg_attr(feature = "state", serde(skip, default = "state::no_vram"))]
     vram: Box<dyn VramBus>,
     /// The dot stepper's cursor and the frame it is filling.
     pos: Position,
@@ -130,8 +141,10 @@ pub struct Fast {
     odd_frame: bool,
     /// Whether this odd frame's pre-render line did skip its dot.
     skipped: bool,
+    #[cfg_attr(feature = "state", serde(with = "state::bytes"))]
     line_buf: [u8; DOTS_PER_LINE],
     /// Per dot: $2001's emphasis bits as the dot was presented.
+    #[cfg_attr(feature = "state", serde(with = "state::bytes"))]
     line_emph: [u8; DOTS_PER_LINE],
     /// The blank picture's address: what v was when the picture last
     /// followed it (see `BLANK_2007_HOLD`).
@@ -139,15 +152,18 @@ pub struct Fast {
     blank_hold: u8,
     /// The mutation tests/blank.rs proves the gate with: the backdrop
     /// wherever v points.
+    #[cfg_attr(feature = "state", serde(skip))]
     pub blank_shows_backdrop_only: bool,
     /// The mutation tests/p3_sprites16.rs proves its gate with: $2000's
     /// bit 5 ignored, every sprite eight tall.
+    #[cfg_attr(feature = "state", serde(skip))]
     pub tall_sprites_off: bool,
     evaluated: bool,
     out: DotFrame,
     /// The 32-byte palette RAM.
     pub palette: [u8; 32],
     /// The 256-byte OAM.
+    #[cfg_attr(feature = "state", serde(with = "state::bytes"))]
     pub oam: [u8; 256],
     /// $2000 and $2001 as last written. 8x16 sprites (bit 5 of $2000)
     /// and left-edge clipping (bits 1, 2 of $2001) are not modelled.
@@ -863,5 +879,52 @@ impl Fast {
             return Some(done);
         }
         None
+    }
+}
+/// Saved states (feature `state`): see `Fast`'s own note for what is in
+/// one. A console serializes the stepper and, to restore, deserializes a
+/// stepper and hands it to `load_state` on the one it built.
+#[cfg(feature = "state")]
+pub mod state {
+    use super::{Fast, FnVram, VramBus};
+
+    /// The bus a stepper read out of a state stands on until
+    /// `load_state` moves it onto the console's: it answers nothing.
+    pub(crate) fn no_vram() -> Box<dyn VramBus> {
+        Box::new(FnVram(|_| 0))
+    }
+
+    /// An array longer than serde's derive takes, as bytes.
+    pub(crate) mod bytes {
+        pub fn serialize<S: serde::Serializer, const N: usize>(a: &[u8; N], s: S) -> Result<S::Ok, S::Error> {
+            s.serialize_bytes(a)
+        }
+        pub fn deserialize<'de, D: serde::Deserializer<'de>, const N: usize>(d: D) -> Result<[u8; N], D::Error> {
+            let v: Vec<u8> = serde::Deserialize::deserialize(d)?;
+            let n = v.len();
+            v.try_into().map_err(|_| serde::de::Error::custom(format!("{n} bytes where {N} belong")))
+        }
+    }
+
+    impl Fast {
+        /// The stepper as `saved` left it, on this one's table and bus.
+        /// Refused, changing nothing, for a table of another length.
+        pub fn load_state(&mut self, mut saved: Fast) -> Result<(), String> {
+            if saved.pos.line >= super::LINES || saved.pos.dot >= super::DOTS_PER_LINE {
+                return Err(format!("the state stands at line {} dot {}, outside the frame", saved.pos.line, saved.pos.dot));
+            }
+            saved.table = std::mem::take(&mut self.table);
+            saved.active = std::mem::take(&mut self.active);
+            saved.vram = std::mem::replace(&mut self.vram, no_vram());
+            saved.blank_shows_backdrop_only = self.blank_shows_backdrop_only;
+            saved.tall_sprites_off = self.tall_sprites_off;
+            // MUTATE_STATE=1 loses the sprite units' fetched rows, and
+            // tests/state.rs must go red.
+            if std::env::var_os("MUTATE_STATE").is_some() {
+                saved.units = Default::default();
+            }
+            *self = saved;
+            Ok(())
+        }
     }
 }

@@ -5,9 +5,15 @@ edition = "2021"
 license = "MIT"
 description = "The 2C02 ladder: a per-dot stepper whose sequencer table is measured out of rung 0 at build time and whose datapath is authored, held to rung 0's dot golden and to the frame period."
 
+[features]
+# Saved states: the stepper's whole state as serde data, for a console to
+# save and restore (nes-console's `state`). Off by default.
+state = ["dep:serde", "nes-bus/state"]
+
 # Run time: the dot frame contract and nothing else. No node, no netlist.
 [dependencies]
-nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.7" }
+nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.8" }
+serde = { version = "1", features = ["derive"], optional = true }
 
 # Build time only: build.rs runs the switch-level chip for one frame in
 # the standard world and records the per-dot event table into OUT_DIR
@@ -17,8 +23,12 @@ nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.7" }
 v2c02-netlist = { path = "../v2c02-netlist" }
 v2c02-sim = { path = "../v2c02-sim" }
 v2c02-dots = { path = "../v2c02-dots" }
-nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.7" }
+nes-bus = { git = "https://github.com/tinymachines/nes-bus", tag = "v0.1.8" }
 
 [dev-dependencies]
+# The suite always builds with saved states, so tests/state.rs is never
+# compiled out of a run that then reports it passed.
+v2c02-fast = { path = ".", features = ["state"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 v2c02-dots = { path = "../v2c02-dots" }
-ntsc-grid = { git = "https://github.com/tinymachines/ntsc-crt", tag = "v0.2.17" }
+ntsc-grid = { git = "https://github.com/tinymachines/ntsc-crt", tag = "v0.2.18" }
